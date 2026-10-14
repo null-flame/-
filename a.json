@@ -1,10 +1,25 @@
 {
-  "data": [
+  "site": {
+    "name": "Ghost Union",
+    "tagline": "Silent. Precise. Unified.",
+    "description": "Field notes from the operators of the Ghost Union.",
+    "logo": "https://cdn.imgurl.ir/uploads/h971156_IMG_20261013_173614_673.jpg",
+    "chat_url": "http://your-chat-url.com"
+  },
+  "posts": [
     {
-      "welcome": {
-        "title": "خوش امدید به سایت گوست انیون(Ghost union)",
-        "content": "به سایت خوش امدید سایت Ghost union سایت اطلاع رسانی"
-      }
+      "id": "p1",
+      "slug": "ghost-protocol-v3",
+      "title": "Ghost Protocol v3 — Silent Ops",
+      "excerpt": "A short summary of what this post is about...",
+      "content": "## Heading\n\n**Markdown** supported: *italic*, `code`, [links](https://...), lists, quotes.\n\n- point one\n- point two\n\n> Stay silent. Stay sharp.",
+      "cover": "https://cdn.imgurl.ir/uploads/b120819_1789221806450.png",
+      "author": "no.python",
+      "team": "RED",
+      "rank": "Chaos Sovereign",
+      "date": "2026-01-15T10:00:00Z",
+      "tags": ["protocol", "ops", "security"],
+      "featured": true
     }
   ]
 }
