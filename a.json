@@ -21,7 +21,7 @@
   "tags": ["war", "operation", "ultimatum", "GR"],
   "featured": true
     },
-  {
+    {
   "id": "p3",
   "slug": "fall-of-parliament",
   "title": "سقوط پارلمان — بیانیه‌ی رسمی فرماندهی عالی",
@@ -32,8 +32,8 @@
   "team": "BLUE",
   "rank": "Apex Defender",
   "date": "2026-10-14T15:45:00Z",
-  "tags": ["war", "operation", "parliament", "bots", "code-hange", "vitory"],
+  "tags": ["war", "operation", "parliament", "bots", "code-hangi", "victory"],
   "featured": true
-  }
+    }
   ]
 }
