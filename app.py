@@ -1,11 +1,12 @@
 """
-👻 Ghost Union Blog v2.0
+👻 Ghost Union Blog v2.1 — Haunted Edition
 ============================================================
   ⚙ All configuration and content come from the remote JSON.
   ⚙ Threaded comments (with replies) stored in-memory.
   ⚙ Light & Dark themes.
   ⚙ Zero extra dependencies.
   ⚙ Cache-busting for GitHub raw CDN.
+  ⚙ Full-image rendering (no crops) + ghostly ambience.
 ============================================================
 """
 import asyncio
@@ -34,7 +35,7 @@ CACHE_TTL = 300
 #                     IN-MEMORY STORES
 # ============================================================
 _cache: dict = {"data": None, "ts": 0, "etag": None}
-_comments: dict = {}      # slug -> list of comment dicts
+_comments: dict = {}
 _comment_id = 0
 
 
@@ -42,10 +43,6 @@ _comment_id = 0
 #              CONTENT FETCHING  (stdlib urllib)
 # ============================================================
 def _blocking_fetch(etag: Optional[str], bust: bool = False):
-    """
-    Fetch the remote JSON. If `bust=True`, we append a unique query
-    parameter so GitHub's raw CDN is bypassed and we always hit origin.
-    """
     url = CONTENT_URL
     if bust:
         url = f"{CONTENT_URL}?v={int(time.time() * 1000)}"
@@ -53,13 +50,12 @@ def _blocking_fetch(etag: Optional[str], bust: bool = False):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "GhostUnionBlog/2.0",
+            "User-Agent": "GhostUnionBlog/2.1",
             "Accept": "application/json",
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
         },
     )
-    # Only send If-None-Match when we are NOT busting the cache
     if etag and not bust:
         req.add_header("If-None-Match", etag)
 
@@ -79,9 +75,7 @@ async def fetch_content(force: bool = False) -> dict:
         return _cache["data"]
     try:
         status, data, etag = await asyncio.to_thread(
-            _blocking_fetch,
-            _cache["etag"],
-            force,   # ← bust cache when forced
+            _blocking_fetch, _cache["etag"], force,
         )
         if status == "ok":
             _cache["data"] = data
@@ -119,7 +113,6 @@ def _render_inline(text: str) -> str:
         return f"\x00CODE{len(code_spans) - 1}\x00"
 
     text = re.sub(r"`([^`]+)`", _stash_code, text)
-
     text = re.sub(
         r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)",
         lambda m: f'<img src="{_safe_url(m.group(2))}" alt="{m.group(1)}" loading="lazy">',
@@ -289,7 +282,6 @@ def format_date(iso: str) -> str:
 
 
 def tag_counts(posts: list) -> dict:
-    """Return {tag: count} sorted by count desc, then name."""
     counts: dict = {}
     for p in posts:
         for t in p.get("tags", []):
@@ -322,7 +314,6 @@ def author_initial(name: str) -> str:
 
 
 def cover_gradient(slug: str) -> str:
-    """Deterministic gradient used as cover placeholder."""
     h = int(hashlib.md5((slug or "?").encode()).hexdigest(), 16)
     h1 = h % 360
     h2 = (h1 + 70) % 360
@@ -355,7 +346,6 @@ def get_comments(slug: str) -> list:
 
 
 def build_comment_tree(comments: list) -> list:
-    """Returns nested list of comment nodes with .replies children."""
     by_id = {c["id"]: {**c, "replies": []} for c in comments}
     roots: list = []
     for c in comments:
@@ -373,7 +363,7 @@ def count_all(comments: list) -> int:
 
 
 # ============================================================
-#                  HTML TEMPLATE
+#                  HTML TEMPLATE  (Haunted Edition)
 # ============================================================
 HTML = r"""<!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -388,27 +378,31 @@ HTML = r"""<!DOCTYPE html>
 <style>
 /* ============= THEME TOKENS ============= */
 :root, [data-theme="dark"] {
-  --bg:#07090f; --bg-2:#0a0d16; --surface:#101623; --surface-2:#151c2c;
-  --surface-hover:#1a2336; --border:#1d2739; --border-hi:#2a3550;
+  --bg:#05070c; --bg-2:#0a0d16; --surface:#0f1420; --surface-2:#141a28;
+  --surface-hover:#1a2235; --border:#1b2333; --border-hi:#2a3550;
   --text:#e9eef8; --text-dim:#96a3ba; --text-faint:#5b6884;
-  --accent:#8b5cf6; --accent-2:#22d3ee; --accent-3:#f472b6;
-  --accent-soft: rgba(139,92,246,.13); --accent-glow: rgba(139,92,246,.35);
+  --accent:#a78bfa; --accent-2:#22d3ee; --accent-3:#f472b6;
+  --accent-soft: rgba(167,139,250,.13); --accent-glow: rgba(167,139,250,.45);
+  --ghost-glow: rgba(34,211,238,.35);
   --gold:#fbbf24; --danger:#f43f5e; --success:#22c55e;
   --radius:16px; --radius-sm:11px;
-  --shadow-sm: 0 2px 8px rgba(0,0,0,.25);
-  --shadow-md: 0 10px 30px rgba(0,0,0,.35);
-  --shadow-lg: 0 20px 50px rgba(0,0,0,.5);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,.35);
+  --shadow-md: 0 10px 32px rgba(0,0,0,.5);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,.6);
+  --shadow-glow: 0 0 40px var(--accent-glow);
 }
 [data-theme="light"] {
-  --bg:#fafbff; --bg-2:#f2f4fb; --surface:#ffffff; --surface-2:#f7f8fd;
+  --bg:#f6f7fc; --bg-2:#eef1f9; --surface:#ffffff; --surface-2:#f7f8fd;
   --surface-hover:#eef1fa; --border:#e3e7f1; --border-hi:#cbd3e6;
-  --text:#141a2b; --text-dim:#57617a; --text-faint:#8a93ac;
+  --text:#12172a; --text-dim:#57617a; --text-faint:#8a93ac;
   --accent:#6d28d9; --accent-2:#0891b2; --accent-3:#db2777;
-  --accent-soft: rgba(109,40,217,.10); --accent-glow: rgba(109,40,217,.22);
+  --accent-soft: rgba(109,40,217,.10); --accent-glow: rgba(109,40,217,.28);
+  --ghost-glow: rgba(8,145,178,.22);
   --gold:#d97706; --danger:#dc2626; --success:#16a34a;
-  --shadow-sm: 0 2px 6px rgba(20,26,43,.05);
-  --shadow-md: 0 10px 24px rgba(20,26,43,.08);
-  --shadow-lg: 0 18px 44px rgba(20,26,43,.12);
+  --shadow-sm: 0 2px 6px rgba(20,26,43,.06);
+  --shadow-md: 0 10px 24px rgba(20,26,43,.09);
+  --shadow-lg: 0 22px 50px rgba(20,26,43,.14);
+  --shadow-glow: 0 0 30px var(--accent-glow);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
@@ -418,28 +412,50 @@ body{
   line-height:1.65; min-height:100vh;
   transition:background .3s, color .3s;
   overflow-x:hidden;
+  position:relative;
 }
 
-/* ============= BACKGROUND ORBS (fixed, cheap) ============= */
+/* ============= FOG + ORBS (fixed, GPU-friendly) ============= */
 .bg-deco{position:fixed;inset:0;z-index:-2;pointer-events:none;overflow:hidden}
 .bg-deco::before, .bg-deco::after{
-  content:"";position:absolute;width:720px;height:720px;border-radius:50%;
-  will-change:transform;
+  content:"";position:absolute;width:760px;height:760px;border-radius:50%;
+  will-change:transform,opacity;
 }
 .bg-deco::before{
-  top:-260px;left:-220px;
+  top:-280px;left:-240px;
   background:radial-gradient(circle, var(--accent-glow), transparent 65%);
-  animation:drift1 26s ease-in-out infinite;
+  animation:drift1 28s ease-in-out infinite;
 }
 .bg-deco::after{
-  bottom:-280px;right:-240px;
-  background:radial-gradient(circle, rgba(34,211,238,.22), transparent 65%);
-  animation:drift2 32s ease-in-out infinite;
+  bottom:-300px;right:-260px;
+  background:radial-gradient(circle, var(--ghost-glow), transparent 65%);
+  animation:drift2 34s ease-in-out infinite;
 }
-[data-theme="light"] .bg-deco::before{ background:radial-gradient(circle, rgba(109,40,217,.18), transparent 65%)}
-[data-theme="light"] .bg-deco::after{ background:radial-gradient(circle, rgba(8,145,178,.16), transparent 65%)}
-@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,80px) scale(1.08)}}
-@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-80px,-60px) scale(1.1)}}
+[data-theme="light"] .bg-deco::before{background:radial-gradient(circle, rgba(109,40,217,.20), transparent 65%)}
+[data-theme="light"] .bg-deco::after{background:radial-gradient(circle, rgba(8,145,178,.18), transparent 65%)}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1);opacity:.55}50%{transform:translate(80px,100px) scale(1.1);opacity:.8}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1);opacity:.5}50%{transform:translate(-90px,-70px) scale(1.12);opacity:.75}}
+
+/* ============= GHOST SWARM (5 floating ghosts) ============= */
+.ghost-swarm{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.ghost-swarm span{
+  position:absolute;
+  font-size:26px;
+  opacity:.07;
+  filter:blur(1px) drop-shadow(0 0 24px var(--accent));
+  animation:ghostFloat 22s ease-in-out infinite;
+  will-change:transform,opacity;
+}
+.ghost-swarm span:nth-child(1){left:8%;top:18%;animation-delay:0s;font-size:30px}
+.ghost-swarm span:nth-child(2){left:82%;top:32%;animation-delay:-6s;font-size:20px}
+.ghost-swarm span:nth-child(3){left:28%;top:68%;animation-delay:-11s;font-size:34px}
+.ghost-swarm span:nth-child(4){left:66%;top:82%;animation-delay:-16s;font-size:18px}
+.ghost-swarm span:nth-child(5){left:46%;top:8%;animation-delay:-3s;font-size:22px}
+@keyframes ghostFloat{
+  0%,100%{transform:translate(0,0) rotate(-6deg);opacity:.05}
+  33%{transform:translate(14px,-30px) rotate(4deg);opacity:.14}
+  66%{transform:translate(-10px,-14px) rotate(-3deg);opacity:.09}
+}
 
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:none}
@@ -448,7 +464,7 @@ img{max-width:100%;display:block}
 /* ============= NAV ============= */
 nav{
   position:sticky;top:0;z-index:50;
-  background:color-mix(in srgb, var(--bg) 78%, transparent);
+  background:color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter:blur(18px) saturate(180%);
   -webkit-backdrop-filter:blur(18px) saturate(180%);
   border-bottom:1px solid var(--border);
@@ -461,40 +477,58 @@ nav{
 .nav-logo .ghost-icon{width:36px;height:36px;border-radius:10px;
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
   display:flex;align-items:center;justify-content:center;font-size:19px;
-  box-shadow:0 4px 18px var(--accent-glow)}
+  box-shadow:0 4px 20px var(--accent-glow);
+  animation:ghostBob 3.4s ease-in-out infinite}
+@keyframes ghostBob{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-3px) rotate(2deg)}}
 .nav-spacer{flex:1}
 .nav-links{display:flex;gap:6px;align-items:center}
 .nav-links a{padding:8px 14px;border-radius:10px;font-size:13.5px;font-weight:600;
-  color:var(--text-dim);transition:.2s}
+  color:var(--text-dim);transition:.2s;position:relative}
 .nav-links a:hover{color:var(--text);background:var(--surface-hover)}
 .nav-links a.active{color:var(--accent);background:var(--accent-soft)}
 .nav-chat{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;
   border-radius:11px;font-size:13.5px;font-weight:700;
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
-  color:#fff !important; box-shadow:0 4px 18px var(--accent-glow);
+  color:#fff !important; box-shadow:0 4px 20px var(--accent-glow);
   transition:.25s;white-space:nowrap}
-.nav-chat:hover{transform:translateY(-1px);box-shadow:0 8px 24px var(--accent-glow)}
+.nav-chat:hover{transform:translateY(-1px);box-shadow:0 8px 28px var(--accent-glow)}
 .theme-toggle{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);
   background:var(--surface);color:var(--text);font-size:16px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;transition:.2s}
-.theme-toggle:hover{background:var(--surface-hover);border-color:var(--accent-hi);color:var(--accent)}
+  display:flex;align-items:center;justify-content:center;transition:.25s}
+.theme-toggle:hover{background:var(--surface-hover);border-color:var(--accent);
+  color:var(--accent);transform:rotate(180deg)}
 @media(max-width:640px){ .nav-links a:not(.nav-chat){display:none} }
 
 /* ============= LAYOUT ============= */
 .container{max-width:1120px;margin:0 auto;padding:36px 22px 80px;position:relative}
 
 /* ============= HERO ============= */
-.hero{padding:48px 0 44px;border-bottom:1px solid var(--border);margin-bottom:44px;position:relative}
+.hero{padding:52px 0 46px;border-bottom:1px solid var(--border);
+  margin-bottom:44px;position:relative}
+.hero::before{
+  content:"";position:absolute;
+  top:-80px;left:-60px;right:-60px;bottom:-40px;
+  background:radial-gradient(ellipse at 30% 40%, var(--accent-glow), transparent 60%);
+  filter:blur(70px);opacity:.35;z-index:-1;pointer-events:none;
+  animation:heroPulse 7s ease-in-out infinite;
+}
+@keyframes heroPulse{0%,100%{opacity:.25;transform:scale(1)}50%{opacity:.5;transform:scale(1.05)}}
 .hero .tagline{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11.5px;
   color:var(--accent-2);letter-spacing:4px;text-transform:uppercase;margin-bottom:16px;
   padding:5px 12px;border-radius:20px;
-  background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.25)}
+  background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);
+  box-shadow:0 0 24px rgba(34,211,238,.15)}
 .hero h1{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:clamp(34px,5.5vw,58px);font-weight:700;
+  font-size:clamp(34px,5.5vw,60px);font-weight:700;
   letter-spacing:-1.5px;line-height:1.05;margin-bottom:18px;
-  background:linear-gradient(135deg,var(--text) 20%,var(--accent) 55%,var(--accent-2) 90%);
-  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  background:linear-gradient(135deg,var(--text) 15%,var(--accent) 55%,var(--accent-2) 90%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 30px var(--accent-glow))}
 .hero p{color:var(--text-dim);font-size:16.5px;max-width:660px;line-height:1.65}
+.hero .ghost-big{position:absolute;right:20px;top:30px;font-size:96px;
+  opacity:.09;filter:blur(.5px) drop-shadow(0 0 40px var(--accent));
+  animation:ghostBob 5s ease-in-out infinite;pointer-events:none}
+@media(max-width:640px){.hero .ghost-big{font-size:64px;right:6px;top:20px;opacity:.06}}
 
 /* ============= TOOLBAR ============= */
 .toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;
@@ -504,8 +538,8 @@ nav{
   border:1px solid var(--border);border-radius:12px;color:var(--text);
   font-size:14px;outline:none;transition:.22s;font-family:inherit}
 .search-box input::placeholder{color:var(--text-faint)}
-.search-box input:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);
-  background:var(--surface-2)}
+.search-box input:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft),
+  0 0 24px var(--accent-glow);background:var(--surface-2)}
 .search-box svg{position:absolute;left:15px;top:50%;transform:translateY(-50%);
   width:16px;height:16px;color:var(--text-faint);pointer-events:none}
 .tag-cloud{display:flex;flex-wrap:wrap;gap:7px;flex:1;justify-content:flex-end;
@@ -514,9 +548,10 @@ nav{
   background:var(--surface);color:var(--text-dim);font-size:12px;font-weight:600;
   cursor:pointer;transition:.2s;display:inline-flex;align-items:center;gap:6px;
   font-family:inherit;white-space:nowrap}
-.tag-btn:hover{border-color:var(--accent);color:var(--text);transform:translateY(-1px)}
+.tag-btn:hover{border-color:var(--accent);color:var(--text);transform:translateY(-1px);
+  box-shadow:0 0 20px var(--accent-glow)}
 .tag-btn.active{background:linear-gradient(135deg,var(--accent),var(--accent-2));
-  border-color:transparent;color:#fff;box-shadow:0 4px 14px var(--accent-glow)}
+  border-color:transparent;color:#fff;box-shadow:0 4px 18px var(--accent-glow)}
 .tag-btn .count{font-family:'JetBrains Mono',monospace;font-size:10px;opacity:.75;
   padding:1px 6px;border-radius:9px;background:rgba(255,255,255,.08)}
 .tag-btn.active .count{background:rgba(255,255,255,.22);opacity:1}
@@ -526,27 +561,62 @@ nav{
 @media(min-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
 .card{background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;
-  transition:transform .3s cubic-bezier(.2,.7,.3,1), box-shadow .3s, border-color .3s;
+  transition:transform .35s cubic-bezier(.2,.7,.3,1), box-shadow .35s, border-color .35s;
   position:relative}
 .card::before{content:"";position:absolute;inset:0;border-radius:var(--radius);
-  padding:1px;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  padding:1px;background:linear-gradient(135deg,var(--accent),var(--accent-2),var(--accent-3));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
-  opacity:0;transition:opacity .3s;pointer-events:none}
-.card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:transparent}
+  opacity:0;transition:opacity .35s;pointer-events:none;z-index:5}
+.card:hover{transform:translateY(-6px);
+  box-shadow:var(--shadow-lg), 0 0 60px -8px var(--accent-glow);
+  border-color:transparent}
 .card:hover::before{opacity:1}
-.card-cover{height:190px;overflow:hidden;position:relative;
-  background:linear-gradient(135deg,var(--surface-hover),var(--bg-2))}
-.card-cover img{width:100%;height:100%;object-fit:cover;
-  transition:transform .6s cubic-bezier(.2,.7,.3,1)}
-.card:hover .card-cover img{transform:scale(1.06)}
-.card-cover::after{content:"";position:absolute;inset:0;
-  background:linear-gradient(180deg,transparent 50%,rgba(0,0,0,.25))}
-.card-featured{position:absolute;top:14px;left:14px;z-index:2;
+
+/* ----- card cover: FULL IMAGE (no crop) with blurred ambient backdrop ----- */
+.card-cover{
+  position:relative;
+  aspect-ratio:16/10;
+  overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--surface-hover),var(--bg-2));
+  padding:16px;
+}
+.card-cover::before{
+  content:"";position:absolute;inset:-40px;
+  background-image:var(--cover, none);
+  background-size:cover;background-position:center;
+  filter:blur(32px) brightness(.5) saturate(1.8);
+  opacity:.85;z-index:0;
+}
+.card-cover::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.4));
+  z-index:2;pointer-events:none;
+}
+.card-cover img{
+  position:relative;z-index:1;
+  max-width:100%;max-height:100%;
+  width:auto;height:auto;
+  object-fit:contain;
+  border-radius:8px;
+  box-shadow:0 14px 40px rgba(0,0,0,.55), 0 0 30px var(--accent-glow);
+  transition:transform .7s cubic-bezier(.2,.7,.3,1);
+}
+.card:hover .card-cover img{transform:scale(1.03)}
+.card-cover .cover-placeholder{
+  position:relative;z-index:1;
+  width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:64px;opacity:.4;
+  border-radius:8px;
+}
+.card-featured{position:absolute;top:14px;left:14px;z-index:3;
   background:linear-gradient(135deg,var(--gold),#f59e0b);color:#000;
   font-size:10px;font-weight:800;padding:4px 11px;border-radius:20px;
   letter-spacing:1.2px;text-transform:uppercase;
-  box-shadow:0 4px 14px rgba(251,191,36,.4)}
+  box-shadow:0 4px 16px rgba(251,191,36,.5)}
+
 .card-body{padding:20px 22px 22px;flex:1;display:flex;flex-direction:column}
 .card-meta{display:flex;align-items:center;gap:10px;font-size:11.5px;
   color:var(--text-faint);font-family:'JetBrains Mono',monospace;margin-bottom:12px}
@@ -554,19 +624,21 @@ nav{
 .card-title{font-family:'Space Grotesk','Inter',sans-serif;
   font-size:20px;font-weight:700;line-height:1.28;letter-spacing:-.4px;margin-bottom:10px}
 .card-title a{color:var(--text);transition:.2s}
-.card-title a:hover{color:var(--accent)}
+.card-title a:hover{color:var(--accent);text-shadow:0 0 24px var(--accent-glow)}
 .card-excerpt{color:var(--text-dim);font-size:14px;line-height:1.65;flex:1;margin-bottom:16px}
 .card-footer{display:flex;align-items:center;gap:11px;padding-top:15px;
   border-top:1px solid var(--border);font-size:12.5px}
 .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;
-  box-shadow:0 2px 8px rgba(0,0,0,.2)}
+  box-shadow:0 2px 10px rgba(0,0,0,.3), 0 0 20px -4px currentColor}
 .card-author{color:var(--text-dim);font-weight:600;font-size:12.5px}
 .card-rank{color:var(--text-faint);font-size:11px;margin-top:1px}
 .card-tags{display:flex;gap:5px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .card-tags span{font-size:10px;padding:3px 9px;border-radius:12px;
   background:var(--accent-soft);color:var(--accent);font-weight:600;
-  font-family:'JetBrains Mono',monospace;letter-spacing:.2px}
+  font-family:'JetBrains Mono',monospace;letter-spacing:.2px;
+  border:1px solid transparent;transition:.2s}
+.card:hover .card-tags span{border-color:var(--accent-soft)}
 
 /* ============= POST VIEW ============= */
 .post-header{max-width:780px;margin:0 auto 36px}
@@ -575,7 +647,7 @@ nav{
   background:var(--accent-soft);color:var(--accent);font-weight:600;
   font-family:'JetBrains Mono',monospace}
 .post-header h1{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:clamp(30px,5vw,46px);font-weight:700;letter-spacing:-1.3px;
+  font-size:clamp(30px,5vw,48px);font-weight:700;letter-spacing:-1.3px;
   line-height:1.15;margin:0 0 22px}
 .post-meta{display:flex;align-items:center;flex-wrap:wrap;gap:16px;
   padding:18px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
@@ -586,20 +658,50 @@ nav{
 .post-meta .meta-right{margin-left:auto;text-align:right;
   font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-faint)}
 .post-meta .meta-right .read{color:var(--accent-2);margin-top:3px}
-.post-cover{border-radius:var(--radius);overflow:hidden;margin-bottom:36px;
-  border:1px solid var(--border);max-height:440px;box-shadow:var(--shadow-md)}
-.post-cover img{width:100%;height:100%;object-fit:cover}
-.post-cover.no-img{height:180px;background:var(--grad, linear-gradient(135deg,#4c1d95,#0891b2));
-  position:relative;display:flex;align-items:center;justify-content:center}
-.post-cover.no-img::before{content:"";position:absolute;inset:0;
-  background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.15),transparent 60%)}
-.post-cover.no-img span{font-size:64px;opacity:.25;filter:grayscale(1)}
+
+/* ----- post cover: FULL IMAGE, natural height, no crop ----- */
+.post-cover{
+  position:relative;
+  border-radius:var(--radius);
+  overflow:hidden;
+  margin-bottom:36px;
+  border:1px solid var(--border);
+  box-shadow:var(--shadow-md), 0 0 60px -20px var(--accent-glow);
+  background:var(--bg-2);
+  display:flex;align-items:center;justify-content:center;
+}
+.post-cover::before{
+  content:"";position:absolute;inset:-40px;
+  background-image:var(--cover, none);
+  background-size:cover;background-position:center;
+  filter:blur(46px) brightness(.42) saturate(1.8);
+  opacity:.85;z-index:0;
+}
+.post-cover img{
+  position:relative;z-index:1;
+  width:100%;
+  height:auto;
+  max-height:82vh;
+  object-fit:contain;
+  display:block;
+}
+.post-cover.no-img{
+  height:200px;
+  background:var(--grad, linear-gradient(135deg,#4c1d95,#0891b2));
+}
+.post-cover.no-img::before{display:none}
+.post-cover.no-img span{position:relative;z-index:1;font-size:72px;opacity:.3;
+  filter:grayscale(.2)}
 
 .prose{max-width:780px;margin:0 auto;font-size:16.5px;line-height:1.85;color:var(--text)}
 .prose>*+*{margin-top:1.1em}
 .prose h2{font-family:'Space Grotesk','Inter',sans-serif;
   font-size:27px;font-weight:700;letter-spacing:-.5px;
-  margin:42px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+  margin:42px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--border);
+  position:relative}
+.prose h2::after{content:"";position:absolute;left:0;bottom:-1px;width:60px;height:2px;
+  background:linear-gradient(90deg,var(--accent),transparent);
+  box-shadow:0 0 16px var(--accent-glow)}
 .prose h3{font-size:20px;font-weight:700;margin:32px 0 12px;letter-spacing:-.2px}
 .prose h4{font-size:17px;font-weight:700;margin:26px 0 10px}
 .prose p{margin-bottom:18px}
@@ -608,7 +710,8 @@ nav{
 .prose li::marker{color:var(--accent)}
 .prose blockquote{border-left:3px solid var(--accent);padding:14px 20px;
   margin:24px 0;background:var(--surface);border-radius:0 12px 12px 0;
-  color:var(--text-dim);font-style:italic;position:relative}
+  color:var(--text-dim);font-style:italic;position:relative;
+  box-shadow:-4px 0 24px -8px var(--accent-glow)}
 .prose blockquote::before{content:'"';position:absolute;top:-12px;left:12px;
   font-size:52px;line-height:1;color:var(--accent);opacity:.25;
   font-family:Georgia,serif}
@@ -622,15 +725,13 @@ nav{
 .prose pre code{background:none;padding:0;color:var(--text);font-size:13.5px;
   line-height:1.65;border:none}
 .prose img{border-radius:12px;margin:24px 0;border:1px solid var(--border);
-  box-shadow:var(--shadow-md)}
-.prose a{font-weight:600;border-bottom:1px solid var(--accent-soft);
-  transition:.2s}
-.prose a:hover{border-bottom-color:var(--accent)}
+  box-shadow:var(--shadow-md);width:100%;height:auto}
+.prose a{font-weight:600;border-bottom:1px solid var(--accent-soft);transition:.2s}
+.prose a:hover{border-bottom-color:var(--accent);text-shadow:0 0 16px var(--accent-glow)}
 .prose hr{border:none;border-top:1px solid var(--border);margin:36px 0}
 .prose table{width:100%;border-collapse:collapse;margin:24px 0;font-size:14.5px;
   border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.prose th, .prose td{padding:12px 16px;border-bottom:1px solid var(--border);
-  text-align:left}
+.prose th, .prose td{padding:12px 16px;border-bottom:1px solid var(--border);text-align:left}
 .prose th{background:var(--surface-2);font-weight:700;font-size:13px;
   text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim)}
 .prose tr:last-child td{border-bottom:none}
@@ -643,16 +744,16 @@ nav{
 .related-list{display:grid;gap:14px}
 @media(min-width:600px){.related-list{grid-template-columns:repeat(3,1fr)}}
 .related-item{background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;padding:16px;transition:.25s;display:flex;flex-direction:column;gap:8px}
-.related-item:hover{border-color:var(--accent);transform:translateY(-3px);
-  box-shadow:var(--shadow-md)}
+  border-radius:14px;padding:16px;transition:.3s;display:flex;flex-direction:column;gap:8px}
+.related-item:hover{border-color:var(--accent);transform:translateY(-4px);
+  box-shadow:var(--shadow-md), 0 0 30px -8px var(--accent-glow)}
 .related-item a{color:var(--text);font-weight:700;font-size:14px;
   line-height:1.4;transition:.2s}
 .related-item a:hover{color:var(--accent)}
 .related-item .date{font-size:11px;color:var(--text-faint);
   font-family:'JetBrains Mono',monospace;margin-top:auto}
 
-/* ============= COMMENTS (threaded) ============= */
+/* ============= COMMENTS ============= */
 .comments{max-width:780px;margin:64px auto 0;padding-top:36px;
   border-top:1px solid var(--border)}
 .comments h3{font-family:'Space Grotesk','Inter',sans-serif;
@@ -660,11 +761,13 @@ nav{
   display:flex;align-items:center;gap:10px}
 .comments h3 .count{background:var(--accent-soft);color:var(--accent);
   font-size:12px;padding:3px 11px;border-radius:14px;
-  font-family:'JetBrains Mono',monospace;font-weight:700}
+  font-family:'JetBrains Mono',monospace;font-weight:700;
+  box-shadow:0 0 20px -4px var(--accent-glow)}
 
 .comment-form{margin-bottom:32px;background:var(--surface);border:1px solid var(--border);
   border-radius:16px;padding:18px 20px;transition:.25s}
-.comment-form:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+.comment-form:focus-within{border-color:var(--accent);
+  box-shadow:0 0 0 4px var(--accent-soft), 0 0 40px -10px var(--accent-glow)}
 .comment-form .row{display:grid;grid-template-columns:1fr;gap:10px}
 .comment-form input, .comment-form textarea{width:100%;padding:12px 15px;
   background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
@@ -675,16 +778,16 @@ nav{
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
   color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;
   transition:.22s;font-family:inherit;
-  box-shadow:0 4px 16px var(--accent-glow)}
+  box-shadow:0 4px 20px var(--accent-glow)}
 .comment-form button:hover:not(:disabled){transform:translateY(-1px);
-  box-shadow:0 6px 22px var(--accent-glow)}
+  box-shadow:0 6px 26px var(--accent-glow)}
 .comment-form button:disabled{opacity:.5;cursor:not-allowed}
 
 .comment-list{display:flex;flex-direction:column;gap:20px}
 .comment-thread{position:relative}
 .comment{background:var(--surface);border:1px solid var(--border);
   border-radius:14px;padding:16px 18px;transition:.2s;position:relative}
-.comment:hover{border-color:var(--border-hi)}
+.comment:hover{border-color:var(--border-hi);box-shadow:0 0 30px -14px var(--accent-glow)}
 .comment.reply{margin-left:0;background:var(--surface-2);
   border-left:3px solid var(--accent);border-radius:0 12px 12px 0}
 .comment-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
@@ -705,13 +808,14 @@ nav{
   position:relative}
 .comment-replies::before{content:"";position:absolute;left:-2px;top:0;bottom:0;
   width:2px;background:linear-gradient(180deg,var(--accent),transparent 60%);
-  opacity:.5}
+  opacity:.6;box-shadow:0 0 12px var(--accent-glow)}
 .reply-slot{}
 
 .reply-form{margin-top:12px;margin-left:20px;padding:14px 16px;
   background:var(--surface-2);border:1px solid var(--accent);
   border-radius:12px;display:flex;flex-direction:column;gap:9px;
-  animation:slideIn .22s ease}
+  animation:slideIn .22s ease;
+  box-shadow:0 0 30px -10px var(--accent-glow)}
 @keyframes slideIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .reply-form input, .reply-form textarea{width:100%;padding:10px 13px;
   background:var(--bg-2);border:1px solid var(--border);border-radius:9px;
@@ -738,23 +842,25 @@ nav{
 .back-link{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;
   font-weight:600;color:var(--text-dim);margin-bottom:26px;
   padding:8px 14px;border-radius:10px;transition:.2s}
-.back-link:hover{color:var(--accent);background:var(--accent-soft);text-decoration:none}
+.back-link:hover{color:var(--accent);background:var(--accent-soft);
+  text-decoration:none;box-shadow:0 0 20px -6px var(--accent-glow)}
 footer{border-top:1px solid var(--border);padding:34px 22px;text-align:center;
   color:var(--text-faint);font-size:12.5px;
-  font-family:'JetBrains Mono',monospace;line-height:1.9}
-footer .ghost{color:var(--accent);font-size:14px}
+  font-family:'JetBrains Mono',monospace;line-height:1.9;position:relative}
+footer .ghost{color:var(--accent);font-size:14px;
+  display:inline-block;animation:ghostBob 3.6s ease-in-out infinite}
 footer .sub{opacity:.55;font-size:11px;margin-top:4px}
 .chat-cta{display:inline-flex;align-items:center;gap:9px;padding:13px 26px;
   border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent-2));
   color:#fff !important;font-weight:700;font-size:14px;transition:.25s;
-  margin-top:22px;box-shadow:0 8px 28px var(--accent-glow)}
-.chat-cta:hover{transform:translateY(-2px);box-shadow:0 12px 36px var(--accent-glow);
+  margin-top:22px;box-shadow:0 8px 32px var(--accent-glow)}
+.chat-cta:hover{transform:translateY(-2px);box-shadow:0 14px 40px var(--accent-glow);
   text-decoration:none}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:5px;
   border:2px solid var(--bg)}
-::-webkit-scrollbar-thumb:hover{background:var(--text-faint)}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 ::selection{background:var(--accent);color:#fff}
 
 @media(max-width:640px){
@@ -769,11 +875,15 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
   .tag-cloud{justify-content:flex-start;max-height:none}
   .comment-replies{margin-left:10px;padding-left:12px}
   .reply-form{margin-left:10px}
+  .card-cover{padding:10px}
 }
 </style>
 </head>
 <body>
 <div class="bg-deco"></div>
+<div class="ghost-swarm" aria-hidden="true">
+  <span>👻</span><span>👻</span><span>👻</span><span>👻</span><span>👻</span>
+</div>
 
 <nav>
   <div class="nav-inner">
@@ -1032,6 +1142,7 @@ def build_home(data: dict) -> str:
 
     parts = [f"""
     <div class="hero">
+      <span class="ghost-big" aria-hidden="true">👻</span>
       <div class="tagline">{html.escape(site.get('tagline', 'Silent. Precise. Unified.'))}</div>
       <h1>{html.escape(site.get('name', 'Ghost Union'))}</h1>
       <p>{html.escape(site.get('description', 'Field notes from the operators of the Ghost Union.'))}</p>
@@ -1069,13 +1180,16 @@ def build_home(data: dict) -> str:
         for p in posts:
             cover = p.get("cover", "")
             slug = p.get("slug", "")
+            cover_style = ""
             if cover:
-                cover_html = f'<img src="{html.escape(cover)}" alt="" loading="lazy">'
+                # Full image displayed with blurred ambient backdrop
+                cover_esc = html.escape(cover, quote=True)
+                cover_html = f'<img src="{cover_esc}" alt="" loading="lazy">'
+                cover_style = f' style="--cover:url(&quot;{cover_esc}&quot;)"'
             else:
                 grad = cover_gradient(slug)
-                cover_html = (f'<div style="width:100%;height:100%;background:{grad};'
-                              f'display:flex;align-items:center;justify-content:center;'
-                              f'font-size:56px;opacity:.35">👻</div>')
+                cover_html = (f'<div class="cover-placeholder" '
+                              f'style="background:{grad}">👻</div>')
             featured = '<span class="card-featured">Featured</span>' if p.get("featured") else ""
             author = p.get("author", "Unknown")
             color = author_avatar(author)
@@ -1089,7 +1203,7 @@ def build_home(data: dict) -> str:
             rt = reading_time(p)
             parts.append(f"""
             <article class="card" data-title="{title}" data-excerpt="{ex}" data-tags="{tags_data}">
-              <div class="card-cover">{cover_html}{featured}</div>
+              <div class="card-cover"{cover_style}>{cover_html}{featured}</div>
               <div class="card-body">
                 <div class="card-meta"><span>{date}</span><span class="dot"></span><span>{rt} min read</span></div>
                 <h2 class="card-title"><a href="/post/{html.escape(slug)}">{title}</a></h2>
@@ -1113,7 +1227,6 @@ def build_home(data: dict) -> str:
 
 
 def render_comment_node(c: dict) -> str:
-    """Recursively render a comment and its replies."""
     c_color = author_avatar(c["author"])
     c_initial = author_initial(c["author"])
     author_attr = html.escape(c["author"], quote=True).replace("'", "\\'")
@@ -1149,12 +1262,17 @@ def build_post(data: dict, post: dict) -> str:
     tags_html = "".join(f'<span>{html.escape(t)}</span>' for t in post.get("tags", []))
     cover = post.get("cover", "")
     slug = post.get("slug", "")
+
     if cover:
-        cover_html = f'<div class="post-cover"><img src="{html.escape(cover)}" alt=""></div>'
+        # Full image, natural height, no crop, with blurred ambient backdrop
+        cover_esc = html.escape(cover, quote=True)
+        cover_html = (f'<div class="post-cover" style="--cover:url(&quot;{cover_esc}&quot;)">'
+                      f'<img src="{cover_esc}" alt=""></div>')
     else:
         grad = cover_gradient(slug)
         cover_html = (f'<div class="post-cover no-img" style="--grad:{grad}">'
                       f'<span>👻</span></div>')
+
     content_html = render_markdown(post.get("content", ""))
     comments = get_comments(slug)
     total_comments = count_all(comments)
@@ -1231,6 +1349,7 @@ def build_about(data: dict) -> str:
     )
     parts = [f"""
     <div class="hero">
+      <span class="ghost-big" aria-hidden="true">👻</span>
       <div class="tagline">About</div>
       <h1>Ghost Union</h1>
       <p>{html.escape(site.get('description', ''))}</p>
@@ -1261,7 +1380,6 @@ NO_CACHE_HEADERS = {
 
 
 def html_no_cache(body: str) -> HTMLResponse:
-    """Return an HTMLResponse with anti-cache headers."""
     return HTMLResponse(content=body, headers=NO_CACHE_HEADERS)
 
 
@@ -1355,7 +1473,6 @@ async def api_comments(slug: str):
 
 @app.get("/refresh")
 async def refresh():
-    """Force-refresh content from remote JSON, bypassing GitHub raw CDN."""
     try:
         await fetch_content(force=True)
     except Exception as e:
@@ -1377,6 +1494,6 @@ async def startup():
 # ============================================================
 if __name__ == "__main__":
     import uvicorn
-    print("👻 Ghost Union Blog v2.0")
+    print("👻 Ghost Union Blog v2.1 — Haunted Edition")
     print("→ http://0.0.0.0:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
