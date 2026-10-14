@@ -1,5 +1,10 @@
 {
-	"data": [
-		"welcome": {"title": "خوش امدید به سایت گوست انیون(Ghost union)", "content": "به سایت خوش امدید سایت Ghost union سایت اطلاع رسانی"}
-	]
+  "data": [
+    {
+      "welcome": {
+        "title": "خوش امدید به سایت گوست انیون(Ghost union)",
+        "content": "به سایت خوش امدید سایت Ghost union سایت اطلاع رسانی"
+      }
+    }
+  ]
 }
