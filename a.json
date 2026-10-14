@@ -8,17 +8,17 @@
   },
   "posts": [
     {
-      "id": "p1",
-      "slug": "ghost-protocol-v3",
-      "title": "Ghost Protocol v3 — Silent Ops",
-      "excerpt": "A short summary of what this post is about...",
-      "content": "## Heading\n\n**Markdown** supported: *italic*, `code`, [links](https://...), lists, quotes.\n\n- point one\n- point two\n\n> Stay silent. Stay sharp.",
+      "id": "p2",
+      "slug": "attack-to-GR",
+      "title": "حمله به گارد Gr",
+      "excerpt": "چرا قراره به Gr حمله بشه و کی قراره حمله بشه؟",
+      "content": "ما قراره به Gr در صورت عدم مذاکره حمله کنیم جوری که GR برای همیشه نابد بشه و حالا قراره بگیم قضیه چیه: \n\n 1. GR دشمن ما هستش ما با وجود قدرت زیاد نیاز داریم که قدرت خود را اثبات کنیم \n 2. GR دشمن ما هستش چندین بار اعلم کرده به ما حمله کنه و ما قراره نابودش کنیم \n 3. ما کلا دوست داریم نابودشون کنیم",
       "cover": "https://cdn.imgurl.ir/uploads/b120819_1789221806450.png",
-      "author": "no.python",
-      "team": "RED",
-      "rank": "Chaos Sovereign",
-      "date": "2026-01-15T10:00:00Z",
-      "tags": ["protocol", "ops", "security"],
+      "author": "AMIR",
+      "team": "BLUE",
+      "rank": "Apex Defender",
+      "date": "2026-10-14T13:30:00Z",
+      "tags": ["wars", "جنگ"],
       "featured": true
     }
   ]
