@@ -5,6 +5,7 @@
   ⚙ Threaded comments (with replies) stored in-memory.
   ⚙ Light & Dark themes.
   ⚙ Zero extra dependencies.
+  ⚙ Cache-busting for GitHub raw CDN.
 ============================================================
 """
 import asyncio
@@ -18,7 +19,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 app = FastAPI(title="Ghost Union Blog")
@@ -40,13 +41,28 @@ _comment_id = 0
 # ============================================================
 #              CONTENT FETCHING  (stdlib urllib)
 # ============================================================
-def _blocking_fetch(etag: Optional[str]):
+def _blocking_fetch(etag: Optional[str], bust: bool = False):
+    """
+    Fetch the remote JSON. If `bust=True`, we append a unique query
+    parameter so GitHub's raw CDN is bypassed and we always hit origin.
+    """
+    url = CONTENT_URL
+    if bust:
+        url = f"{CONTENT_URL}?v={int(time.time() * 1000)}"
+
     req = urllib.request.Request(
-        CONTENT_URL,
-        headers={"User-Agent": "GhostUnionBlog/2.0", "Accept": "application/json"},
+        url,
+        headers={
+            "User-Agent": "GhostUnionBlog/2.0",
+            "Accept": "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
     )
-    if etag:
+    # Only send If-None-Match when we are NOT busting the cache
+    if etag and not bust:
         req.add_header("If-None-Match", etag)
+
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8")
@@ -62,7 +78,11 @@ async def fetch_content(force: bool = False) -> dict:
     if not force and _cache["data"] and (now - _cache["ts"]) < CACHE_TTL:
         return _cache["data"]
     try:
-        status, data, etag = await asyncio.to_thread(_blocking_fetch, _cache["etag"])
+        status, data, etag = await asyncio.to_thread(
+            _blocking_fetch,
+            _cache["etag"],
+            force,   # ← bust cache when forced
+        )
         if status == "ok":
             _cache["data"] = data
             _cache["ts"] = now
@@ -1231,12 +1251,27 @@ def build_about(data: dict) -> str:
 
 
 # ============================================================
+#                  CACHE-BUSTING HELPER
+# ============================================================
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def html_no_cache(body: str) -> HTMLResponse:
+    """Return an HTMLResponse with anti-cache headers."""
+    return HTMLResponse(content=body, headers=NO_CACHE_HEADERS)
+
+
+# ============================================================
 #                  ROUTES
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
 async def home():
     data = await fetch_content()
-    return HTMLResponse(build_home(data))
+    return html_no_cache(build_home(data))
 
 
 @app.get("/post/{slug}", response_class=HTMLResponse)
@@ -1245,19 +1280,22 @@ async def post_view(slug: str):
     post = find_post(data, slug)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    return HTMLResponse(build_post(data, post))
+    return html_no_cache(build_post(data, post))
 
 
 @app.get("/about", response_class=HTMLResponse)
 async def about():
     data = await fetch_content()
-    return HTMLResponse(build_about(data))
+    return html_no_cache(build_about(data))
 
 
 @app.get("/api/posts")
 async def api_posts():
     data = await fetch_content()
-    return JSONResponse({"site": get_site(data), "posts": get_posts(data)})
+    return JSONResponse(
+        {"site": get_site(data), "posts": get_posts(data)},
+        headers=NO_CACHE_HEADERS,
+    )
 
 
 @app.get("/api/posts/{slug}")
@@ -1265,8 +1303,12 @@ async def api_post(slug: str):
     data = await fetch_content()
     post = find_post(data, slug)
     if not post:
-        return JSONResponse({"ok": False, "error": "Not found"}, status_code=404)
-    return JSONResponse({"ok": True, "post": post})
+        return JSONResponse(
+            {"ok": False, "error": "Not found"},
+            status_code=404,
+            headers=NO_CACHE_HEADERS,
+        )
+    return JSONResponse({"ok": True, "post": post}, headers=NO_CACHE_HEADERS)
 
 
 @app.post("/api/comment")
@@ -1305,13 +1347,20 @@ async def api_comment(payload: dict):
 
 @app.get("/api/comments/{slug}")
 async def api_comments(slug: str):
-    return JSONResponse({"ok": True, "comments": get_comments(slug)})
+    return JSONResponse(
+        {"ok": True, "comments": get_comments(slug)},
+        headers=NO_CACHE_HEADERS,
+    )
 
 
 @app.get("/refresh")
 async def refresh():
-    await fetch_content(force=True)
-    return RedirectResponse("/", status_code=303)
+    """Force-refresh content from remote JSON, bypassing GitHub raw CDN."""
+    try:
+        await fetch_content(force=True)
+    except Exception as e:
+        print(f"⚠️  Refresh failed: {e}")
+    return RedirectResponse("/?refreshed=1", status_code=303)
 
 
 @app.on_event("startup")
