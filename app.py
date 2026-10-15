@@ -29,7 +29,7 @@ app = FastAPI(title="Ghost Union Blog")
 #                     CONFIG
 # ============================================================
 CONTENT_URL = "https://raw.githubusercontent.com/null-flame/-/refs/heads/main/a.json"
-CACHE_TTL = 300
+CACHE_TTL = 50
 
 # ============================================================
 #                     IN-MEMORY STORES
@@ -372,6 +372,7 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="{{ site_description }}">
 <meta name="color-scheme" content="dark light">
+<meta name="google-site-verification" content="cwIT15QMNdxP6x8HgeTPLAwImz9TmiHqSnLhZRj5A1o" />
 <title>{{ page_title }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
