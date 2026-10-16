@@ -1,8 +1,10 @@
 """
-👻 Ghost Union Blog v2.1 — Haunted Edition
+👻 Ghost Union Blog v2.2 — Analytics Edition
 ============================================================
   ⚙ All configuration and content come from the remote JSON.
   ⚙ Threaded comments (with replies) stored in-memory.
+  ⚙ Per-post view counter + IP tracking (in-memory).
+  ⚙ Secure admin panel (password protected).
   ⚙ Light & Dark themes.
   ⚙ Zero extra dependencies.
   ⚙ Cache-busting for GitHub raw CDN.
@@ -14,6 +16,7 @@ import hashlib
 import html
 import json
 import re
+import secrets
 import time
 import urllib.error
 import urllib.request
@@ -31,12 +34,77 @@ app = FastAPI(title="Ghost Union Blog")
 CONTENT_URL = "https://raw.githubusercontent.com/null-flame/-/refs/heads/main/a.json"
 CACHE_TTL = 50
 
+ADMIN_PASSWORD = "Gh0st#9x7"
+ADMIN_SESSION_TTL = 4 * 3600  # 4 hours
+
 # ============================================================
 #                     IN-MEMORY STORES
 # ============================================================
 _cache: dict = {"data": None, "ts": 0, "etag": None}
 _comments: dict = {}
 _comment_id = 0
+
+# --- analytics ---
+_views: dict = {}            # slug -> int
+_ips: dict = {}              # ip  -> {first_seen, last_seen, views, name, comments[], ua, pages[]}
+_admin_sessions: dict = {}   # token -> expiry_ts
+
+
+# ============================================================
+#                    ANALYTICS HELPERS
+# ============================================================
+def get_client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    real = request.headers.get("x-real-ip") or request.headers.get("cf-connecting-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else "unknown"
+
+
+def record_visit(ip: str, ua: str, path: str):
+    now = time.time()
+    entry = _ips.get(ip)
+    if entry is None:
+        _ips[ip] = {
+            "first_seen": now,
+            "last_seen": now,
+            "views": 1,
+            "name": None,
+            "comments": [],
+            "user_agent": ua[:220],
+            "pages": [path],
+        }
+    else:
+        entry["last_seen"] = now
+        entry["views"] = entry.get("views", 0) + 1
+        entry.setdefault("pages", []).append(path)
+        if len(entry["pages"]) > 60:
+            entry["pages"] = entry["pages"][-60:]
+        if not entry.get("user_agent"):
+            entry["user_agent"] = ua[:220]
+
+
+def record_commenter(ip: str, name: str, text: str):
+    now = time.time()
+    entry = _ips.get(ip)
+    if entry is None:
+        _ips[ip] = {
+            "first_seen": now, "last_seen": now, "views": 0,
+            "name": name, "comments": [text[:300]],
+            "user_agent": "", "pages": [],
+        }
+    else:
+        entry["name"] = name
+        entry["last_seen"] = now
+        entry.setdefault("comments", []).append(text[:300])
+        if len(entry["comments"]) > 25:
+            entry["comments"] = entry["comments"][-25:]
+
+
+def bump_view(slug: str):
+    _views[slug] = _views.get(slug, 0) + 1
 
 
 # ============================================================
@@ -50,7 +118,7 @@ def _blocking_fetch(etag: Optional[str], bust: bool = False):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "GhostUnionBlog/2.1",
+            "User-Agent": "GhostUnionBlog/2.2",
             "Accept": "application/json",
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
@@ -363,6 +431,20 @@ def count_all(comments: list) -> int:
 
 
 # ============================================================
+#               ADMIN AUTH HELPERS
+# ============================================================
+def admin_authed(request: Request) -> bool:
+    token = request.cookies.get("ghost_admin")
+    if not token:
+        return False
+    exp = _admin_sessions.get(token)
+    if not exp or time.time() > exp:
+        _admin_sessions.pop(token, None)
+        return False
+    return True
+
+
+# ============================================================
 #                  HTML TEMPLATE  (Haunted Edition)
 # ============================================================
 HTML = r"""<!DOCTYPE html>
@@ -372,13 +454,11 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="{{ site_description }}">
 <meta name="color-scheme" content="dark light">
-<meta name="google-site-verification" content="cwIT15QMNdxP6x8HgeTPLAwImz9TmiHqSnLhZRj5A1o" />
 <title>{{ page_title }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
-/* ═══════════ THEME TOKENS ═══════════ */
 :root, [data-theme="dark"] {
   --bg:#05070c; --bg-2:#0a0d16; --surface:#0f1420; --surface-2:#141a28;
   --surface-hover:#1a2235; --border:#1b2333; --border-hi:#2a3550;
@@ -391,8 +471,7 @@ HTML = r"""<!DOCTYPE html>
   --shadow-sm: 0 2px 8px rgba(0,0,0,.35);
   --shadow-md: 0 10px 28px rgba(0,0,0,.45);
   --shadow-lg: 0 20px 44px rgba(0,0,0,.55);
-  --noise-op: .035;
-  --grid-op: .022;
+  --noise-op: .035; --grid-op: .022;
 }
 [data-theme="light"] {
   --bg:#f6f7fc; --bg-2:#eef1f9; --surface:#ffffff; --surface-2:#f7f8fd;
@@ -405,22 +484,18 @@ HTML = r"""<!DOCTYPE html>
   --shadow-sm: 0 2px 6px rgba(20,26,43,.06);
   --shadow-md: 0 8px 20px rgba(20,26,43,.08);
   --shadow-lg: 0 18px 40px rgba(20,26,43,.12);
-  --noise-op: .04;
-  --grid-op: .05;
+  --noise-op: .04; --grid-op: .05;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 body{
   font-family:'Inter',system-ui,-apple-system,sans-serif;
-  color:var(--text);
-  line-height:1.65; min-height:100vh;
+  color:var(--text); line-height:1.65; min-height:100vh;
   transition:background-color .3s, color .3s;
   overflow-x:hidden; position:relative;
   text-rendering:optimizeLegibility;
   font-feature-settings:"kern" 1,"liga" 1,"calt" 1,"ss01" 1;
   scrollbar-gutter:stable;
-
-  /* ═══ لایه‌های استاتیک پس‌زمینه — یک‌بار رندر، کش همیشگی ═══ */
   background-color: var(--bg);
   background-image:
     linear-gradient(rgba(167,139,250,var(--grid-op)) 1px, transparent 1px),
@@ -437,8 +512,6 @@ body{
     radial-gradient(ellipse 900px 700px at 12% 8%, rgba(109,40,217,.10) 0%, transparent 55%),
     radial-gradient(ellipse 800px 800px at 92% 92%, rgba(8,145,178,.09) 0%, transparent 55%);
 }
-
-/* ═══ بافت نویز — یک‌بار رندر، کش همیشگی ═══ */
 body::after{
   content:"";position:fixed;inset:0;z-index:1;pointer-events:none;
   opacity:var(--noise-op);
@@ -447,70 +520,32 @@ body::after{
   mix-blend-mode:overlay;
 }
 [data-theme="light"] body::after{ mix-blend-mode:multiply; }
-
-/* ═══ Scroll Progress Bar — فقط transform ═══ */
-.scroll-progress{
-  position:fixed;top:0;left:0;right:0;height:2px;
+.scroll-progress{position:fixed;top:0;left:0;right:0;height:2px;
   transform:scaleX(0);transform-origin:0 50%;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),var(--accent-3));
-  z-index:200;pointer-events:none;
-  will-change:transform;
-  opacity:.9;
-}
-
-/* ═══ Ghost swarm — ۳ شبح، فقط opacity ═══ */
-.ghost-swarm{
-  position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
-  contain:strict;
-}
-.ghost-swarm span{
-  position:absolute;font-size:28px;color:var(--accent);
+  z-index:200;pointer-events:none;will-change:transform;opacity:.9;}
+.ghost-swarm{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;contain:strict;}
+.ghost-swarm span{position:absolute;font-size:28px;color:var(--accent);
   text-shadow:0 0 14px var(--accent);opacity:.05;
-  animation:ghostPulse 14s ease-in-out infinite;
-  user-select:none;line-height:1;
-}
+  animation:ghostPulse 14s ease-in-out infinite;user-select:none;line-height:1;}
 .ghost-swarm span:nth-child(1){left:10%;top:22%;animation-delay:0s;font-size:32px}
 .ghost-swarm span:nth-child(2){left:84%;top:38%;animation-delay:-5s;font-size:22px}
 .ghost-swarm span:nth-child(3){left:32%;top:72%;animation-delay:-9s;font-size:38px}
 @keyframes ghostPulse{0%,100%{opacity:.04}50%{opacity:.14}}
-
 a{color:var(--accent);text-decoration:none}
 img{max-width:100%;display:block}
-
-/* ═══ TYPOGRAPHY POLISH ═══ */
-h1,h2,h3,h4,.card-title,.hero h1,.post-header h1,.prose h2,.prose h3{
-  text-wrap:balance;
-}
-p,.prose p,.hero p,.card-excerpt{
-  text-wrap:pretty;
-}
-
-/* ═══ Focus — دسترس‌پذیری زیبا ═══ */
-:focus-visible{
-  outline:2px solid var(--accent);
-  outline-offset:2px;
-  border-radius:6px;
-}
+h1,h2,h3,h4,.card-title,.hero h1,.post-header h1,.prose h2,.prose h3{text-wrap:balance;}
+p,.prose p,.hero p,.card-excerpt{text-wrap:pretty;}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
 :focus:not(:focus-visible){outline:none}
-
-/* ═══ Selection ═══ */
 ::selection{background:var(--accent);color:#fff}
-
-/* ═══ Inputs accent ═══ */
 input,textarea,button{accent-color:var(--accent)}
-
-/* ═══════════════ NAV ═══════════════ */
-nav{
-  position:sticky;top:0;z-index:50;
+nav{position:sticky;top:0;z-index:50;
   background:color-mix(in srgb, var(--bg) 88%, transparent);
-  border-bottom:1px solid var(--border);
-  position:relative;
-}
-nav::after{
-  content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  border-bottom:1px solid var(--border);position:relative;}
+nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);
-  opacity:.55;
-}
+  opacity:.55;}
 .nav-inner{max-width:1120px;margin:0 auto;padding:13px 22px;
   display:flex;align-items:center;gap:18px}
 .nav-logo{display:flex;align-items:center;gap:11px;font-weight:800;
@@ -519,28 +554,20 @@ nav::after{
 .nav-logo .ghost-icon{width:36px;height:36px;border-radius:10px;
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
   display:flex;align-items:center;justify-content:center;font-size:19px;
-  box-shadow:0 4px 16px var(--accent-glow);
-  position:relative}
-.nav-logo .ghost-icon::before{
-  content:"";position:absolute;inset:-3px;border-radius:13px;
+  box-shadow:0 4px 16px var(--accent-glow);position:relative}
+.nav-logo .ghost-icon::before{content:"";position:absolute;inset:-3px;border-radius:13px;
   background:conic-gradient(from 180deg,var(--accent),var(--accent-2),var(--accent-3),var(--accent));
-  z-index:-1;opacity:.35;
-}
+  z-index:-1;opacity:.35;}
 .nav-spacer{flex:1}
 .nav-links{display:flex;gap:6px;align-items:center}
 .nav-links a{padding:8px 14px;border-radius:10px;font-size:13.5px;font-weight:600;
-  color:var(--text-dim);transition:color .2s, background .2s;
-  position:relative}
+  color:var(--text-dim);transition:color .2s, background .2s;position:relative}
 .nav-links a:hover{color:var(--text);background:var(--surface-hover)}
 .nav-links a.active{color:var(--accent);background:var(--accent-soft)}
-.nav-links a::after{
-  content:"";position:absolute;left:14px;right:14px;bottom:4px;height:1px;
+.nav-links a::after{content:"";position:absolute;left:14px;right:14px;bottom:4px;height:1px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2));
-  transform:scaleX(0);transform-origin:left;
-  transition:transform .25s;
-}
-.nav-links a:hover::after,
-.nav-links a.active::after{transform:scaleX(1)}
+  transform:scaleX(0);transform-origin:left;transition:transform .25s;}
+.nav-links a:hover::after,.nav-links a.active::after{transform:scaleX(1)}
 .nav-chat{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;
   border-radius:11px;font-size:13.5px;font-weight:700;
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
@@ -555,53 +582,36 @@ nav::after{
 .theme-toggle:hover{background:var(--surface-hover);border-color:var(--accent);
   color:var(--accent);transform:rotate(180deg)}
 @media(max-width:640px){ .nav-links a:not(.nav-chat){display:none} }
-
-/* ═══════════════ LAYOUT ═══════════════ */
 .container{max-width:1120px;margin:0 auto;padding:36px 22px 80px;position:relative;z-index:2}
-
-/* ═══════════════ HERO ═══════════════ */
 .hero{padding:56px 0 46px;border-bottom:1px solid var(--border);
   margin-bottom:44px;position:relative}
-.hero::before{
-  content:"";position:absolute;
+.hero::before{content:"";position:absolute;
   top:-60px;left:-40px;right:-40px;bottom:-40px;
   background:radial-gradient(ellipse at 30% 40%, var(--accent-glow) 0%, transparent 55%);
-  z-index:-1;pointer-events:none;opacity:.35;
-}
-.hero::after{
-  content:"";position:absolute;
-  top:20px;right:20px;width:56px;height:56px;
+  z-index:-1;pointer-events:none;opacity:.35;}
+.hero::after{content:"";position:absolute;top:20px;right:20px;width:56px;height:56px;
   background:
     linear-gradient(var(--accent),var(--accent)) left top/14px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) left top/1px 14px no-repeat,
     linear-gradient(var(--accent),var(--accent)) right bottom/14px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) right bottom/1px 14px no-repeat;
-  opacity:.55;
-}
+  opacity:.55;}
 .hero .tagline{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11.5px;
   color:var(--accent-2);letter-spacing:4px;text-transform:uppercase;margin-bottom:16px;
   padding:5px 12px;border-radius:20px;
-  background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);
-  position:relative}
-.hero .tagline::before{
-  content:"";position:absolute;left:-3px;top:50%;width:6px;height:6px;
-  border-radius:50%;background:var(--accent-2);
-  transform:translate(-100%,-50%);
-  box-shadow:0 0 8px var(--accent-2);
-}
+  background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);position:relative}
+.hero .tagline::before{content:"";position:absolute;left:-3px;top:50%;width:6px;height:6px;
+  border-radius:50%;background:var(--accent-2);transform:translate(-100%,-50%);
+  box-shadow:0 0 8px var(--accent-2);}
 .hero h1{font-family:'Space Grotesk','Inter',sans-serif;
   font-size:clamp(34px,5.5vw,60px);font-weight:700;
   letter-spacing:-1.5px;line-height:1.05;margin-bottom:18px;
   background:linear-gradient(135deg,var(--text) 15%,var(--accent) 55%,var(--accent-2) 90%);
   -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .hero p{color:var(--text-dim);font-size:16.5px;max-width:660px;line-height:1.65}
-.hero .ghost-big{position:absolute;right:20px;top:40px;font-size:96px;
-  color:var(--accent);
-  text-shadow:0 0 24px var(--accent);
-  opacity:.08;pointer-events:none;user-select:none;line-height:1}
+.hero .ghost-big{position:absolute;right:20px;top:40px;font-size:96px;color:var(--accent);
+  text-shadow:0 0 24px var(--accent);opacity:.08;pointer-events:none;user-select:none;line-height:1}
 @media(max-width:640px){.hero .ghost-big{font-size:64px;right:6px;top:20px;opacity:.06}}
-
-/* ═══════════════ TOOLBAR ═══════════════ */
 .toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;
   justify-content:space-between;margin-bottom:32px}
 .search-box{position:relative;flex:1;min-width:220px;max-width:420px}
@@ -617,107 +627,73 @@ nav::after{
   max-height:120px;overflow-y:auto;padding:2px}
 .tag-btn{padding:6px 13px;border-radius:20px;border:1px solid var(--border);
   background:var(--surface);color:var(--text-dim);font-size:12px;font-weight:600;
-  cursor:pointer;
-  transition:border-color .2s, color .2s, transform .2s;
-  display:inline-flex;align-items:center;gap:6px;
-  font-family:inherit;white-space:nowrap}
+  cursor:pointer;transition:border-color .2s, color .2s, transform .2s;
+  display:inline-flex;align-items:center;gap:6px;font-family:inherit;white-space:nowrap}
 .tag-btn:hover{border-color:var(--accent);color:var(--text);transform:translate3d(0,-1px,0)}
 .tag-btn.active{background:linear-gradient(135deg,var(--accent),var(--accent-2));
   border-color:transparent;color:#fff}
 .tag-btn .count{font-family:'JetBrains Mono',monospace;font-size:10px;opacity:.75;
   padding:1px 6px;border-radius:9px;background:rgba(255,255,255,.08)}
 .tag-btn.active .count{background:rgba(255,255,255,.22);opacity:1}
-
-/* ═══════════════ CARDS ═══════════════ */
 .grid{display:grid;gap:24px}
 @media(min-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
 .card{background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;
   transition:transform .3s cubic-bezier(.2,.7,.3,1), border-color .3s;
-  position:relative;
-  content-visibility:auto;
-  contain-intrinsic-size:auto 460px}
-.card::before{
-  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  position:relative;content-visibility:auto;contain-intrinsic-size:auto 460px}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2),var(--accent-3));
-  opacity:0;transition:opacity .3s;z-index:4;
-}
-.card::after{
-  content:"";position:absolute;top:12px;right:12px;width:20px;height:20px;
+  opacity:0;transition:opacity .3s;z-index:4;}
+.card::after{content:"";position:absolute;top:12px;right:12px;width:20px;height:20px;
   background:
     linear-gradient(var(--accent),var(--accent)) right top/12px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) right top/1px 12px no-repeat;
-  opacity:0;transition:opacity .3s;z-index:4;pointer-events:none;
-}
-.card:hover{
-  transform:translate3d(0,-5px,0);
-  border-color:var(--accent);
-  box-shadow:0 14px 34px -14px var(--accent-glow);
-}
+  opacity:0;transition:opacity .3s;z-index:4;pointer-events:none;}
+.card:hover{transform:translate3d(0,-5px,0);border-color:var(--accent);
+  box-shadow:0 14px 34px -14px var(--accent-glow);}
 .card:hover::before{opacity:1}
 .card:hover::after{opacity:.65}
-
-.card-cover{
-  position:relative;aspect-ratio:16/10;overflow:hidden;
+.card-cover{position:relative;aspect-ratio:16/10;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,var(--surface-hover),var(--bg-2));
-  padding:16px;contain:paint;
-}
-.card-cover::before{
-  content:"";position:absolute;inset:0;
-  background:var(--cover, none);
-  background-size:cover;background-position:center;
-  opacity:.32;z-index:0;
-}
-.card-cover::after{
-  content:"";position:absolute;inset:0;
+  padding:16px;contain:paint;}
+.card-cover::before{content:"";position:absolute;inset:0;
+  background:var(--cover, none);background-size:cover;background-position:center;
+  opacity:.32;z-index:0;}
+.card-cover::after{content:"";position:absolute;inset:0;
   background:
     linear-gradient(180deg,transparent 40%,rgba(0,0,0,.45)),
     linear-gradient(135deg,transparent 60%,var(--accent-soft));
-  z-index:2;pointer-events:none;
-}
-.card-cover img{
-  position:relative;z-index:1;
-  max-width:100%;max-height:100%;
-  width:auto;height:auto;object-fit:contain;
-  border-radius:8px;
+  z-index:2;pointer-events:none;}
+.card-cover img{position:relative;z-index:1;max-width:100%;max-height:100%;
+  width:auto;height:auto;object-fit:contain;border-radius:8px;
   box-shadow:0 10px 26px rgba(0,0,0,.5);
-  transition:transform .5s cubic-bezier(.2,.7,.3,1);
-}
+  transition:transform .5s cubic-bezier(.2,.7,.3,1);}
 .card:hover .card-cover img{transform:scale(1.03)}
-.card-cover .cover-placeholder{
-  position:relative;z-index:1;width:100%;height:100%;
+.card-cover .cover-placeholder{position:relative;z-index:1;width:100%;height:100%;
   display:flex;align-items:center;justify-content:center;
-  font-size:64px;opacity:.4;border-radius:8px;
-}
+  font-size:64px;opacity:.4;border-radius:8px;}
 .card-featured{position:absolute;top:14px;left:14px;z-index:3;
   background:linear-gradient(135deg,var(--gold),#f59e0b);color:#000;
   font-size:10px;font-weight:800;padding:4px 11px;border-radius:20px;
   letter-spacing:1.2px;text-transform:uppercase}
-
 .card-body{padding:20px 22px 22px;flex:1;display:flex;flex-direction:column}
 .card-meta{display:flex;align-items:center;gap:10px;font-size:11.5px;
   color:var(--text-faint);font-family:'JetBrains Mono',monospace;margin-bottom:12px}
 .card-meta .dot{width:3px;height:3px;border-radius:50%;background:var(--text-faint)}
 .card-title{font-family:'Space Grotesk','Inter',sans-serif;
   font-size:20px;font-weight:700;line-height:1.28;letter-spacing:-.4px;margin-bottom:10px}
-.card-title a{
-  color:var(--text);
+.card-title a{color:var(--text);
   background-image:linear-gradient(90deg,var(--accent),var(--accent-2));
-  background-size:0% 2px;
-  background-position:0 100%;
-  background-repeat:no-repeat;
+  background-size:0% 2px;background-position:0 100%;background-repeat:no-repeat;
   padding-bottom:2px;
-  transition:color .25s, background-size .35s cubic-bezier(.2,.7,.3,1);
-}
+  transition:color .25s, background-size .35s cubic-bezier(.2,.7,.3,1);}
 .card-title a:hover{color:var(--accent);background-size:100% 2px}
 .card-excerpt{color:var(--text-dim);font-size:14px;line-height:1.65;flex:1;margin-bottom:16px}
 .card-footer{display:flex;align-items:center;gap:11px;padding-top:15px;
   border-top:1px solid var(--border);font-size:12.5px;position:relative}
-.card-footer::before{
-  content:"";position:absolute;top:-1px;left:0;width:36px;height:1px;
-  background:linear-gradient(90deg,var(--accent),transparent);
-}
+.card-footer::before{content:"";position:absolute;top:-1px;left:0;width:36px;height:1px;
+  background:linear-gradient(90deg,var(--accent),transparent);}
 .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;
   position:relative;
@@ -730,16 +706,12 @@ nav::after{
   font-family:'JetBrains Mono',monospace;letter-spacing:.2px;
   border:1px solid transparent;transition:border-color .2s}
 .card:hover .card-tags span{border-color:var(--accent-soft)}
-
-/* ═══════════════ POST VIEW ═══════════════ */
 .post-header{max-width:780px;margin:0 auto 36px;position:relative}
-.post-header::before{
-  content:"";position:absolute;top:-30px;left:-30px;width:44px;height:44px;
+.post-header::before{content:"";position:absolute;top:-30px;left:-30px;width:44px;height:44px;
   background:
     linear-gradient(var(--accent),var(--accent)) left top/16px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) left top/1px 16px no-repeat;
-  opacity:.5;
-}
+  opacity:.5;}
 .post-tags-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
 .post-tags-row span{font-size:11px;padding:4px 11px;border-radius:20px;
   background:var(--accent-soft);color:var(--accent);font-weight:600;
@@ -750,10 +722,8 @@ nav::after{
 .post-meta{display:flex;align-items:center;flex-wrap:wrap;gap:16px;
   padding:18px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
   position:relative}
-.post-meta::after{
-  content:"";position:absolute;bottom:-1px;left:0;width:80px;height:1px;
-  background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);
-}
+.post-meta::after{content:"";position:absolute;bottom:-1px;left:0;width:80px;height:1px;
+  background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);}
 .post-meta .author-block{display:flex;align-items:center;gap:12px}
 .post-meta .avatar{width:44px;height:44px;font-size:17px;
   box-shadow:0 0 0 3px var(--surface), 0 0 0 4px var(--accent-soft)}
@@ -762,211 +732,101 @@ nav::after{
 .post-meta .meta-right{margin-left:auto;text-align:right;
   font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-faint)}
 .post-meta .meta-right .read{color:var(--accent-2);margin-top:3px}
-
-.post-cover{
-  position:relative;border-radius:var(--radius);overflow:hidden;
+.post-cover{position:relative;border-radius:var(--radius);overflow:hidden;
   margin-bottom:36px;border:1px solid var(--border);
   box-shadow:var(--shadow-md);background:var(--bg-2);
-  display:flex;align-items:center;justify-content:center;contain:paint;
-}
-.post-cover::before{
-  content:"";position:absolute;inset:0;
-  background:var(--cover, none);
-  background-size:cover;background-position:center;
-  opacity:.28;z-index:0;
-}
-.post-cover::after{
-  content:"";position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;contain:paint;}
+.post-cover::before{content:"";position:absolute;inset:0;
+  background:var(--cover, none);background-size:cover;background-position:center;
+  opacity:.28;z-index:0;}
+.post-cover::after{content:"";position:absolute;inset:0;
   background:linear-gradient(180deg,transparent 55%,rgba(0,0,0,.3));
-  z-index:2;pointer-events:none;
-}
+  z-index:2;pointer-events:none;}
 .post-cover img{position:relative;z-index:1;width:100%;height:auto;max-height:82vh;
   object-fit:contain;display:block}
 .post-cover.no-img{height:200px;background:var(--grad, linear-gradient(135deg,#4c1d95,#0891b2))}
-.post-cover.no-img::before,
-.post-cover.no-img::after{display:none}
+.post-cover.no-img::before,.post-cover.no-img::after{display:none}
 .post-cover.no-img span{position:relative;z-index:1;font-size:72px;opacity:.3}
-
-/* ═══════════════ PROSE — قلب تایپوگرافی ═══════════════ */
 .prose{max-width:780px;margin:0 auto;font-size:16.5px;line-height:1.85;color:var(--text)}
 .prose>*+*{margin-top:1.1em}
-
-/* Drop Cap — تنها روی اولین پاراگراف */
 .prose>p:first-of-type::first-letter{
   font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:3.6em;
-  line-height:.82;
-  float:left;
-  margin:.06em .14em 0 0;
-  color:var(--accent);
-  font-weight:700;
-  letter-spacing:-.02em;
-}
+  font-size:3.6em;line-height:.82;float:left;
+  margin:.06em .14em 0 0;color:var(--accent);font-weight:700;letter-spacing:-.02em;}
 @media(max-width:640px){
   .prose>p:first-of-type::first-letter{font-size:2.8em;margin:.04em .1em 0 0}
 }
-
 .prose h2{font-family:'Space Grotesk','Inter',sans-serif;
   font-size:27px;font-weight:700;letter-spacing:-.5px;
-  margin:42px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--border);
-  position:relative}
+  margin:42px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--border);position:relative}
 .prose h2::after{content:"";position:absolute;left:0;bottom:-1px;width:60px;height:2px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent)}
 .prose h3{font-size:20px;font-weight:700;margin:32px 0 12px;letter-spacing:-.2px}
 .prose h4{font-size:17px;font-weight:700;margin:26px 0 10px}
 .prose p{margin-bottom:18px}
-
-/* لیست‌های سفارشی — لوزی ◆ برای ul */
 .prose ul{list-style:none;margin:0 0 20px 0;padding:0}
 .prose ul>li{padding-left:22px;position:relative;margin-bottom:8px}
-.prose ul>li::before{
-  content:"◆";
-  position:absolute;left:0;top:0;
-  color:var(--accent);
-  font-size:9px;
-  line-height:2.4;
-  opacity:.85;
-}
+.prose ul>li::before{content:"◆";position:absolute;left:0;top:0;color:var(--accent);
+  font-size:9px;line-height:2.4;opacity:.85;}
 .prose ul>li>ul{margin-top:8px}
-
-/* شماره‌های دایره‌ای برای ol */
 .prose ol{list-style:none;margin:0 0 20px 0;padding:0;counter-reset:ol-c}
 .prose ol>li{padding-left:36px;position:relative;margin-bottom:10px;counter-increment:ol-c}
-.prose ol>li::before{
-  content:counter(ol-c);
-  position:absolute;left:0;top:2px;
-  width:24px;height:24px;border-radius:50%;
-  background:var(--accent-soft);
-  color:var(--accent);
-  border:1px solid var(--accent-soft);
-  font-size:11px;font-weight:700;
-  display:flex;align-items:center;justify-content:center;
-  font-family:'JetBrains Mono',monospace;
-}
-
-.prose blockquote{
-  border-left:3px solid var(--accent);
-  padding:16px 22px;
-  margin:24px 0;
-  background:var(--surface);
-  border-radius:0 12px 12px 0;
-  color:var(--text-dim);
-  font-style:italic;
-  position:relative;
-}
-.prose blockquote::before{
-  content:'"';
-  position:absolute;top:-10px;left:14px;
-  font-size:56px;line-height:1;color:var(--accent);opacity:.22;
-  font-family:Georgia,serif;
-}
-.prose blockquote::after{
-  content:"";position:absolute;right:-1px;bottom:-1px;
-  width:18px;height:18px;
-  border-right:1px solid var(--accent);
-  border-bottom:1px solid var(--accent);
-  opacity:.3;
-}
+.prose ol>li::before{content:counter(ol-c);position:absolute;left:0;top:2px;
+  width:24px;height:24px;border-radius:50%;background:var(--accent-soft);
+  color:var(--accent);border:1px solid var(--accent-soft);
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;}
+.prose blockquote{border-left:3px solid var(--accent);padding:16px 22px;margin:24px 0;
+  background:var(--surface);border-radius:0 12px 12px 0;color:var(--text-dim);
+  font-style:italic;position:relative;}
+.prose blockquote::before{content:'"';position:absolute;top:-10px;left:14px;
+  font-size:56px;line-height:1;color:var(--accent);opacity:.22;font-family:Georgia,serif;}
+.prose blockquote::after{content:"";position:absolute;right:-1px;bottom:-1px;
+  width:18px;height:18px;border-right:1px solid var(--accent);
+  border-bottom:1px solid var(--accent);opacity:.3;}
 .prose blockquote p:last-child{margin-bottom:0}
-
-/* Inline code — به سبک keycap */
-.prose code{
-  font-family:'JetBrains Mono',monospace;
-  background:var(--surface-2);
-  padding:2px 7px;border-radius:6px;
-  font-size:13.5px;
-  color:var(--accent-2);
-  border:1px solid var(--border);
-  box-shadow:0 1px 0 var(--border-hi);
-  font-weight:600;
-}
-
-/* Code blocks */
-.prose pre{
-  background:var(--bg-2);
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:18px 20px;
-  overflow-x:auto;
-  margin:24px 0;
-  position:relative;
-  box-shadow:var(--shadow-sm);
-}
-.prose pre::before{
-  content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;
+.prose code{font-family:'JetBrains Mono',monospace;background:var(--surface-2);
+  padding:2px 7px;border-radius:6px;font-size:13.5px;color:var(--accent-2);
+  border:1px solid var(--border);box-shadow:0 1px 0 var(--border-hi);font-weight:600;}
+.prose pre{background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
+  padding:18px 20px;overflow-x:auto;margin:24px 0;position:relative;
+  box-shadow:var(--shadow-sm);}
+.prose pre::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2));
-  border-radius:2px;opacity:.6;
-}
-.prose pre code{
-  background:none;padding:0;color:var(--text);
-  font-size:13.5px;line-height:1.65;
-  border:none;box-shadow:none;font-weight:400;
-}
-
+  border-radius:2px;opacity:.6;}
+.prose pre code{background:none;padding:0;color:var(--text);
+  font-size:13.5px;line-height:1.65;border:none;box-shadow:none;font-weight:400;}
 .prose img{border-radius:12px;margin:24px 0;border:1px solid var(--border);
   box-shadow:var(--shadow-md);width:100%;height:auto}
-
-/* لینک‌های ظریف */
-.prose a{
-  font-weight:600;
-  text-decoration:underline;
-  text-decoration-color:var(--accent-soft);
-  text-decoration-thickness:1px;
+.prose a{font-weight:600;text-decoration:underline;
+  text-decoration-color:var(--accent-soft);text-decoration-thickness:1px;
   text-underline-offset:3px;
-  transition:text-decoration-color .2s, text-decoration-thickness .2s, color .2s;
-}
-.prose a:hover{
-  text-decoration-color:var(--accent);
-  text-decoration-thickness:2px;
-}
-
-/* جداکننده تزئینی ◆ */
-.prose hr{
-  border:none;
-  margin:52px 0;
-  height:1px;
+  transition:text-decoration-color .2s, text-decoration-thickness .2s, color .2s;}
+.prose a:hover{text-decoration-color:var(--accent);text-decoration-thickness:2px;}
+.prose hr{border:none;margin:52px 0;height:1px;
   background:linear-gradient(90deg,transparent,var(--border-hi) 25%,var(--border-hi) 75%,transparent);
-  position:relative;
-}
-.prose hr::before{
-  content:"◆";
-  position:absolute;left:50%;top:50%;
-  transform:translate(-50%,-50%);
-  color:var(--accent);
-  font-size:9px;line-height:1;
-  text-shadow:0 0 8px var(--accent-glow);
-}
-
-/* جدول با زبرا استرایپ */
-.prose table{
-  width:100%;border-collapse:collapse;margin:24px 0;font-size:14.5px;
-  border:1px solid var(--border);border-radius:12px;overflow:hidden;
-}
+  position:relative;}
+.prose hr::before{content:"◆";position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);color:var(--accent);font-size:9px;line-height:1;
+  text-shadow:0 0 8px var(--accent-glow);}
+.prose table{width:100%;border-collapse:collapse;margin:24px 0;font-size:14.5px;
+  border:1px solid var(--border);border-radius:12px;overflow:hidden;}
 .prose th, .prose td{padding:12px 16px;border-bottom:1px solid var(--border);text-align:left}
-.prose th{
-  background:var(--surface-2);font-weight:700;font-size:13px;
-  text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);
-}
+.prose th{background:var(--surface-2);font-weight:700;font-size:13px;
+  text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);}
 .prose tbody tr:nth-child(even){background:var(--surface-2)}
 .prose tr:last-child td{border-bottom:none}
-
-/* ═══════════════ RELATED ═══════════════ */
 .related{max-width:780px;margin:56px auto 0}
 .related h3{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:17px;font-weight:700;margin-bottom:18px;
-  display:flex;align-items:center;gap:9px}
+  font-size:17px;font-weight:700;margin-bottom:18px;display:flex;align-items:center;gap:9px}
 .related-list{display:grid;gap:14px}
 @media(min-width:600px){.related-list{grid-template-columns:repeat(3,1fr)}}
 .related-item{background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;padding:16px;
-  transition:border-color .3s, transform .3s;
-  display:flex;flex-direction:column;gap:8px;
-  position:relative;overflow:hidden}
-.related-item::before{
-  content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+  border-radius:14px;padding:16px;transition:border-color .3s, transform .3s;
+  display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden}
+.related-item::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2));
-  opacity:0;transition:opacity .3s;
-}
+  opacity:0;transition:opacity .3s;}
 .related-item:hover{border-color:var(--accent);transform:translate3d(0,-4px,0);
   box-shadow:0 10px 26px -12px var(--accent-glow)}
 .related-item:hover::before{opacity:1}
@@ -975,26 +835,18 @@ nav::after{
 .related-item a:hover{color:var(--accent)}
 .related-item .date{font-size:11px;color:var(--text-faint);
   font-family:'JetBrains Mono',monospace;margin-top:auto}
-
-/* ═══════════════ COMMENTS ═══════════════ */
 .comments{max-width:780px;margin:64px auto 0;padding-top:36px;
   border-top:1px solid var(--border);position:relative}
-.comments::before{
-  content:"";position:absolute;top:-1px;left:0;width:120px;height:1px;
-  background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);
-}
+.comments::before{content:"";position:absolute;top:-1px;left:0;width:120px;height:1px;
+  background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);}
 .comments h3{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:19px;font-weight:700;margin-bottom:24px;
-  display:flex;align-items:center;gap:10px}
+  font-size:19px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px}
 .comments h3 .count{background:var(--accent-soft);color:var(--accent);
   font-size:12px;padding:3px 11px;border-radius:14px;
   font-family:'JetBrains Mono',monospace;font-weight:700}
-
 .comment-form{margin-bottom:32px;background:var(--surface);border:1px solid var(--border);
-  border-radius:16px;padding:18px 20px;
-  transition:border-color .25s}
-.comment-form:focus-within{border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft)}
+  border-radius:16px;padding:18px 20px;transition:border-color .25s}
+.comment-form:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .comment-form .row{display:grid;grid-template-columns:1fr;gap:10px}
 .comment-form input, .comment-form textarea{width:100%;padding:12px 15px;
   background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
@@ -1011,13 +863,10 @@ nav::after{
   box-shadow:0 6px 20px var(--accent-glow)}
 .comment-form button:active:not(:disabled){transform:translate3d(0,0,0)}
 .comment-form button:disabled{opacity:.5;cursor:not-allowed}
-
 .comment-list{display:flex;flex-direction:column;gap:20px}
 .comment-thread{position:relative;content-visibility:auto;contain-intrinsic-size:auto 120px}
 .comment{background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;padding:16px 18px;
-  transition:border-color .2s;
-  position:relative}
+  border-radius:14px;padding:16px 18px;transition:border-color .2s;position:relative}
 .comment:hover{border-color:var(--border-hi)}
 .comment.reply{margin-left:0;background:var(--surface-2);
   border-left:3px solid var(--accent);border-radius:0 12px 12px 0}
@@ -1038,10 +887,8 @@ nav::after{
   border-left:2px solid var(--border);display:flex;flex-direction:column;gap:12px;
   position:relative}
 .comment-replies::before{content:"";position:absolute;left:-2px;top:0;bottom:0;
-  width:2px;background:linear-gradient(180deg,var(--accent),transparent 60%);
-  opacity:.6}
+  width:2px;background:linear-gradient(180deg,var(--accent),transparent 60%);opacity:.6;}
 .reply-slot{}
-
 .reply-form{margin-top:12px;margin-left:20px;padding:14px 16px;
   background:var(--surface-2);border:1px solid var(--accent);
   border-radius:12px;display:flex;flex-direction:column;gap:9px;
@@ -1063,26 +910,20 @@ nav::after{
   border-color:transparent;color:#fff}
 .reply-form-actions .btn-submit:hover{transform:translate3d(0,-1px,0);color:#fff}
 .no-comments{color:var(--text-faint);font-size:13.5px;text-align:center;
-  padding:28px;background:var(--surface);border:1px dashed var(--border);
-  border-radius:14px}
-
-/* ═══════════════ UTILITY ═══════════════ */
+  padding:28px;background:var(--surface);border:1px dashed var(--border);border-radius:14px}
 .empty{text-align:center;padding:80px 20px;color:var(--text-faint)}
 .empty .icon{font-size:52px;margin-bottom:16px}
 .empty p{font-size:15px}
 .back-link{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;
   font-weight:600;color:var(--text-dim);margin-bottom:26px;
-  padding:8px 14px;border-radius:10px;
-  transition:color .2s, background .2s}
+  padding:8px 14px;border-radius:10px;transition:color .2s, background .2s}
 .back-link:hover{color:var(--accent);background:var(--accent-soft)}
 footer{border-top:1px solid var(--border);padding:34px 22px;text-align:center;
   color:var(--text-faint);font-size:12.5px;
   font-family:'JetBrains Mono',monospace;line-height:1.9;position:relative}
-footer::before{
-  content:"";position:absolute;top:-1px;left:50%;transform:translateX(-50%);
+footer::before{content:"";position:absolute;top:-1px;left:50%;transform:translateX(-50%);
   width:180px;height:1px;
-  background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);
-}
+  background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);}
 footer .ghost{color:var(--accent);font-size:14px;display:inline-block}
 footer .sub{opacity:.55;font-size:11px;margin-top:4px}
 .chat-cta{display:inline-flex;align-items:center;gap:9px;padding:13px 26px;
@@ -1093,10 +934,8 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
 .chat-cta:hover{transform:translate3d(0,-2px,0);box-shadow:0 10px 26px var(--accent-glow)}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:5px;
-  border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:5px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
-
 @media(max-width:640px){
   .container{padding:24px 16px 60px}
   .hero{padding:32px 0 30px;margin-bottom:32px}
@@ -1112,7 +951,6 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
   .card-cover{padding:10px}
   .hero::after{width:40px;height:40px}
 }
-
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after{
     animation-duration:.01ms !important;
@@ -1153,7 +991,6 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
 </footer>
 
 <script>
-/* ═══ THEME ═══ */
 (function(){
   var saved = localStorage.getItem('ghost_theme');
   if (!saved) {
@@ -1170,8 +1007,6 @@ document.getElementById('themeBtn').addEventListener('click', function(){
   localStorage.setItem('ghost_theme', next);
   this.textContent = next === 'dark' ? '◐' : '☀';
 });
-
-/* ═══ SCROLL PROGRESS (transform-only, no layout cost) ═══ */
 (function(){
   var bar = document.getElementById('scrollProgress');
   if (!bar) return;
@@ -1189,8 +1024,6 @@ document.getElementById('themeBtn').addEventListener('click', function(){
   window.addEventListener('resize', update, { passive: true });
   update();
 })();
-
-/* ═══ SEARCH & TAGS (debounced with rAF) ═══ */
 var searchInput = document.getElementById('searchInput');
 if (searchInput) {
   var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
@@ -1227,8 +1060,6 @@ if (searchInput) {
     });
   });
 }
-
-/* ═══ MAIN COMMENT FORM ═══ */
 var cForm = document.getElementById('commentForm');
 if (cForm) {
   cForm.addEventListener('submit', function(e){
@@ -1241,8 +1072,6 @@ if (cForm) {
     });
   });
 }
-
-/* ═══ THREADED COMMENT SUBMIT ═══ */
 function submitComment(slug, author, text, parentId, formEl, done){
   var btn = formEl.querySelector('button[type="submit"]');
   if (btn) { btn.disabled = true; btn.dataset.orig = btn.textContent; btn.textContent = 'Posting…'; }
@@ -1265,13 +1094,11 @@ function submitComment(slug, author, text, parentId, formEl, done){
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.orig || 'Post Comment'; }
   });
 }
-
 function insertComment(c, parentId){
   var list = document.getElementById('commentList');
   if (!list) return;
   var emptyEl = list.querySelector('.no-comments');
   if (emptyEl) emptyEl.remove();
-
   var html =
     '<div class="comment-head">' +
       '<span class="avatar" style="background:' + c.color + '">' + esc(c.initial) + '</span>' +
@@ -1283,12 +1110,10 @@ function insertComment(c, parentId){
       '<button type="button" onclick="showReplyForm(' + c.id + ', \'' + escAttr(c.author) + '\')">↩ Reply</button>' +
     '</div>' +
     '<div class="reply-slot" id="reply-slot-' + c.id + '"></div>';
-
   var div = document.createElement('div');
   div.className = 'comment' + (parentId ? ' reply' : '');
   div.id = 'comment-' + c.id;
   div.innerHTML = html;
-
   if (parentId) {
     var parent = document.getElementById('comment-' + parentId);
     if (parent) {
@@ -1310,16 +1135,13 @@ function insertComment(c, parentId){
     list.appendChild(wrap);
   }
   div.scrollIntoView({ behavior:'smooth', block:'center' });
-
   var cnt = document.getElementById('commentCount');
   if (cnt) cnt.textContent = parseInt(cnt.textContent, 10) + 1;
 }
-
 function showReplyForm(commentId, authorName){
   document.querySelectorAll('.reply-form').forEach(function(f){ f.remove(); });
   var slot = document.getElementById('reply-slot-' + commentId);
   if (!slot) return;
-
   var form = document.createElement('form');
   form.className = 'reply-form';
   form.innerHTML =
@@ -1331,7 +1153,6 @@ function showReplyForm(commentId, authorName){
     '</div>';
   slot.appendChild(form);
   form.querySelector('input').focus();
-
   form.querySelector('.btn-cancel').addEventListener('click', function(){ form.remove(); });
   form.addEventListener('submit', function(e){
     e.preventDefault();
@@ -1344,15 +1165,12 @@ function showReplyForm(commentId, authorName){
     });
   });
 }
-
 function esc(s){
   return String(s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
   });
 }
 function escAttr(s){ return esc(s).replace(/\\/g, '\\\\'); }
-
-/* ═══ REVEAL ON SCROLL ═══ */
 if ('IntersectionObserver' in window) {
   var obs = new IntersectionObserver(function(entries){
     for (var i = 0; i < entries.length; i++) {
@@ -1381,6 +1199,281 @@ if ('IntersectionObserver' in window) {
 </body>
 </html>
 """
+
+# ============================================================
+#                  ADMIN TEMPLATES
+# ============================================================
+ADMIN_LOGIN_HTML = r"""<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>👻 Ghost Union · Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:#05070c;color:#e9eef8;padding:20px;
+  background-image:
+    radial-gradient(ellipse 800px 600px at 20% 10%, rgba(167,139,250,.22) 0%, transparent 55%),
+    radial-gradient(ellipse 700px 700px at 85% 90%, rgba(34,211,238,.18) 0%, transparent 55%);
+}
+.box{
+  background:#0f1420;border:1px solid #1b2333;border-radius:18px;
+  padding:38px 34px;max-width:420px;width:100%;
+  box-shadow:0 20px 44px rgba(0,0,0,.55);
+  position:relative;overflow:hidden;
+}
+.box::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,#a78bfa,#22d3ee,#f472b6);
+}
+.icon{font-size:48px;text-align:center;margin-bottom:14px;
+  filter:drop-shadow(0 0 14px rgba(167,139,250,.6))}
+h1{font-size:22px;font-weight:800;text-align:center;margin-bottom:6px;
+  letter-spacing:-.4px}
+.sub{font-size:12.5px;color:#5b6884;text-align:center;margin-bottom:28px;
+  font-family:'JetBrains Mono',monospace}
+label{display:block;font-size:12px;font-weight:600;color:#96a3ba;
+  margin-bottom:8px;letter-spacing:.3px}
+input{
+  width:100%;padding:13px 15px;background:#0a0d16;border:1px solid #1b2333;
+  border-radius:11px;color:#e9eef8;font-size:14px;font-family:inherit;
+  outline:none;transition:border-color .2s, box-shadow .2s;
+}
+input:focus{border-color:#a78bfa;box-shadow:0 0 0 3px rgba(167,139,250,.13)}
+button{
+  width:100%;padding:13px;margin-top:18px;border:none;border-radius:11px;
+  background:linear-gradient(135deg,#a78bfa,#22d3ee);
+  color:#fff;font-weight:700;font-size:14px;cursor:pointer;
+  font-family:inherit;transition:transform .2s, box-shadow .2s;
+  box-shadow:0 4px 16px rgba(167,139,250,.45);
+}
+button:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(167,139,250,.5)}
+.error{
+  background:rgba(244,63,94,.12);color:#f43f5e;padding:11px 14px;
+  border-radius:10px;font-size:13px;margin-bottom:18px;text-align:center;
+  border:1px solid rgba(244,63,94,.3);font-weight:600;
+}
+.back{display:block;text-align:center;margin-top:18px;color:#5b6884;
+  font-size:12px;text-decoration:none}
+.back:hover{color:#a78bfa}
+</style>
+</head>
+<body>
+<form class="box" method="post" action="/admin/login">
+  <div class="icon">👻</div>
+  <h1>Ghost Admin</h1>
+  <div class="sub">RESTRICTED AREA</div>
+  __ERROR__
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" required autofocus>
+  <button type="submit">Unlock</button>
+  <a class="back" href="/">← back to blog</a>
+</form>
+</body>
+</html>
+"""
+
+ADMIN_DASH_CSS = """
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  background:#05070c;color:#e9eef8;min-height:100vh;
+  background-image:
+    radial-gradient(ellipse 900px 700px at 10% 5%, rgba(167,139,250,.16) 0%, transparent 55%),
+    radial-gradient(ellipse 800px 700px at 90% 95%, rgba(34,211,238,.13) 0%, transparent 55%);
+  padding:28px 20px 60px;
+}
+.wrap{max-width:1240px;margin:0 auto}
+.head{
+  display:flex;align-items:center;gap:14px;margin-bottom:28px;
+  padding-bottom:20px;border-bottom:1px solid #1b2333;
+}
+.head .icon{font-size:34px;filter:drop-shadow(0 0 10px rgba(167,139,250,.6))}
+.head h1{font-size:22px;font-weight:800;letter-spacing:-.4px;flex:1}
+.head .badge{
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;
+  padding:5px 12px;border-radius:20px;
+  background:rgba(34,197,94,.12);color:#22c55e;font-weight:700;
+  border:1px solid rgba(34,197,94,.3);letter-spacing:.5px;
+}
+.head a{
+  padding:9px 16px;border-radius:10px;font-size:12.5px;font-weight:700;
+  text-decoration:none;color:#96a3ba;border:1px solid #1b2333;
+  background:#0f1420;transition:all .2s;
+}
+.head a:hover{color:#f43f5e;border-color:#f43f5e;background:rgba(244,63,94,.08)}
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:14px;margin-bottom:32px;
+}
+.stat{
+  background:#0f1420;border:1px solid #1b2333;border-radius:14px;
+  padding:20px;position:relative;overflow:hidden;
+}
+.stat::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,#a78bfa,#22d3ee);
+}
+.stat .label{font-size:11px;color:#5b6884;font-weight:600;
+  text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.stat .val{font-size:30px;font-weight:800;letter-spacing:-1px;
+  font-family:'JetBrains Mono',monospace;
+  background:linear-gradient(135deg,#e9eef8,#a78bfa);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.stat .hint{font-size:11px;color:#5b6884;margin-top:4px;
+  font-family:'JetBrains Mono',monospace}
+
+h2{font-size:15px;font-weight:700;margin:34px 0 14px;
+  display:flex;align-items:center;gap:9px;letter-spacing:-.2px}
+h2 .count{font-size:11px;padding:3px 10px;border-radius:12px;
+  background:rgba(167,139,250,.13);color:#a78bfa;
+  font-family:'JetBrains Mono',monospace;font-weight:700}
+
+table{
+  width:100%;border-collapse:collapse;font-size:13px;
+  background:#0f1420;border:1px solid #1b2333;border-radius:12px;
+  overflow:hidden;
+}
+th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #1b2333}
+th{background:#0a0d16;font-weight:700;font-size:11px;
+  text-transform:uppercase;letter-spacing:.6px;color:#96a3ba}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#141a28}
+td.mono{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#22d3ee}
+td.name{color:#fbbf24;font-weight:700}
+td.snippet{color:#96a3ba;max-width:340px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
+td .pill{
+  display:inline-block;padding:3px 10px;border-radius:12px;
+  background:rgba(167,139,250,.13);color:#a78bfa;
+  font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;
+}
+td .yes{color:#22c55e}
+td .no{color:#5b6884}
+.empty{padding:36px;text-align:center;color:#5b6884;font-size:13px;
+  background:#0f1420;border:1px dashed #1b2333;border-radius:12px}
+.ua{font-size:11px;color:#5b6884;font-family:'JetBrains Mono',monospace;
+  max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:700px){
+  table{font-size:12px}
+  th,td{padding:9px 10px}
+  td.snippet,td .ua{max-width:160px}
+}
+"""
+
+
+def build_admin_dashboard() -> str:
+    total_views = sum(_views.values())
+    total_ips = len(_ips)
+    total_comments = sum(len(v) for v in _comments.values())
+    commenters = sum(1 for e in _ips.values() if e.get("name"))
+
+    # Per-post table
+    post_rows = []
+    for slug, cnt in sorted(_views.items(), key=lambda kv: -kv[1]):
+        post_rows.append(
+            f"<tr><td class='mono'>/post/{html.escape(slug)}</td>"
+            f"<td><span class='pill'>{cnt}</span></td></tr>"
+        )
+    posts_table = (
+        "<table><thead><tr><th>Post</th><th>Views</th></tr></thead><tbody>"
+        + ("".join(post_rows) if post_rows else
+           "<tr><td colspan='2' style='text-align:center;color:#5b6884'>No views recorded yet.</td></tr>")
+        + "</tbody></table>"
+    )
+
+    # IP table
+    ip_rows = []
+    for ip, e in sorted(_ips.items(), key=lambda kv: -kv[1].get("last_seen", 0)):
+        name = e.get("name") or "—"
+        name_cls = "name" if e.get("name") else ""
+        comments = e.get("comments") or []
+        if comments:
+            snippet = html.escape(comments[-1])
+            comment_marker = f"<span class='yes'>✓ {len(comments)}</span>"
+        else:
+            snippet = "—"
+            comment_marker = "<span class='no'>✗</span>"
+        last_seen = datetime.fromtimestamp(
+            e.get("last_seen", 0), tz=timezone.utc
+        ).strftime("%Y-%m-%d %H:%M UTC")
+        ua = html.escape((e.get("user_agent") or "")[:120])
+        ip_rows.append(
+            f"<tr>"
+            f"<td class='mono'>{html.escape(ip)}</td>"
+            f"<td class='{name_cls}'>{html.escape(name)}</td>"
+            f"<td><span class='pill'>{e.get('views', 0)}</span></td>"
+            f"<td>{comment_marker}</td>"
+            f"<td class='snippet' title='{snippet}'>{snippet}</td>"
+            f"<td class='mono' style='font-size:11.5px'>{last_seen}</td>"
+            f"<td class='ua' title='{ua}'>{ua}</td>"
+            f"</tr>"
+        )
+    ips_table = (
+        "<table><thead><tr>"
+        "<th>IP Address</th><th>Name</th><th>Visits</th>"
+        "<th>Commented</th><th>Last comment</th><th>Last seen</th><th>User-Agent</th>"
+        "</tr></thead><tbody>"
+        + ("".join(ip_rows) if ip_rows else
+           "<tr><td colspan='7' style='text-align:center;color:#5b6884'>No visitors recorded yet.</td></tr>")
+        + "</tbody></table>"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>👻 Ghost Union · Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>{ADMIN_DASH_CSS}</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <span class="icon">👻</span>
+    <h1>Ghost Admin Dashboard</h1>
+    <span class="badge">● LIVE</span>
+    <a href="/admin/logout">Logout</a>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Total Views</div>
+      <div class="val">{total_views}</div>
+      <div class="hint">all posts combined</div>
+    </div>
+    <div class="stat">
+      <div class="label">Unique IPs</div>
+      <div class="val">{total_ips}</div>
+      <div class="hint">distinct visitors</div>
+    </div>
+    <div class="stat">
+      <div class="label">Commenters</div>
+      <div class="val">{commenters}</div>
+      <div class="hint">named identities</div>
+    </div>
+    <div class="stat">
+      <div class="label">Comments</div>
+      <div class="val">{total_comments}</div>
+      <div class="hint">total posted</div>
+    </div>
+  </div>
+
+  <h2>👁 Views per post <span class="count">{len(_views)}</span></h2>
+  {posts_table}
+
+  <h2>🌐 Visitor IP log <span class="count">{total_ips}</span></h2>
+  {ips_table}
+</div>
+</body>
+</html>"""
+
+
 # ============================================================
 #                  TEMPLATE RENDERING
 # ============================================================
@@ -1464,7 +1557,6 @@ def build_home(data: dict) -> str:
             slug = p.get("slug", "")
             cover_style = ""
             if cover:
-                # Full image displayed with blurred ambient backdrop
                 cover_esc = html.escape(cover, quote=True)
                 cover_html = f'<img src="{cover_esc}" alt="" loading="lazy">'
                 cover_style = f' style="--cover:url(&quot;{cover_esc}&quot;)"'
@@ -1483,11 +1575,12 @@ def build_home(data: dict) -> str:
             rank = html.escape(p.get("rank", ""))
             tags_data = html.escape(",".join(p.get("tags", [])), quote=True)
             rt = reading_time(p)
+            pviews = _views.get(slug, 0)
             parts.append(f"""
             <article class="card" data-title="{title}" data-excerpt="{ex}" data-tags="{tags_data}">
               <div class="card-cover"{cover_style}>{cover_html}{featured}</div>
               <div class="card-body">
-                <div class="card-meta"><span>{date}</span><span class="dot"></span><span>{rt} min read</span></div>
+                <div class="card-meta"><span>{date}</span><span class="dot"></span><span>{rt} min</span><span class="dot"></span><span>👁 {pviews}</span></div>
                 <h2 class="card-title"><a href="/post/{html.escape(slug)}">{title}</a></h2>
                 <p class="card-excerpt">{ex}</p>
                 <div class="card-footer">
@@ -1546,7 +1639,6 @@ def build_post(data: dict, post: dict) -> str:
     slug = post.get("slug", "")
 
     if cover:
-        # Full image, natural height, no crop, with blurred ambient backdrop
         cover_esc = html.escape(cover, quote=True)
         cover_html = (f'<div class="post-cover" style="--cover:url(&quot;{cover_esc}&quot;)">'
                       f'<img src="{cover_esc}" alt=""></div>')
@@ -1561,6 +1653,7 @@ def build_post(data: dict, post: dict) -> str:
     tree = build_comment_tree(comments)
     related = related_posts(data, post)
     rt = reading_time(post)
+    pviews = _views.get(slug, 0)
 
     parts = [f"""
     <a class="back-link" href="/">← Back to all posts</a>
@@ -1578,7 +1671,7 @@ def build_post(data: dict, post: dict) -> str:
           </div>
           <div class="meta-right">
             <div>{html.escape(format_date(post.get('date', '')))}</div>
-            <div class="read">◷ {rt} min read</div>
+            <div class="read">◷ {rt} min read · 👁 {pviews} views</div>
           </div>
         </div>
       </header>
@@ -1666,6 +1759,24 @@ def html_no_cache(body: str) -> HTMLResponse:
 
 
 # ============================================================
+#                  VISITOR TRACKING MIDDLEWARE
+# ============================================================
+@app.middleware("http")
+async def visitor_tracker(request: Request, call_next):
+    path = request.url.path
+    if (request.method == "GET"
+            and not path.startswith(("/admin", "/api", "/refresh"))
+            and not path.startswith("/static")):
+        try:
+            ip = get_client_ip(request)
+            ua = request.headers.get("user-agent", "")
+            record_visit(ip, ua, path)
+        except Exception:
+            pass
+    return await call_next(request)
+
+
+# ============================================================
 #                  ROUTES
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
@@ -1675,11 +1786,12 @@ async def home():
 
 
 @app.get("/post/{slug}", response_class=HTMLResponse)
-async def post_view(slug: str):
+async def post_view(slug: str, request: Request):
     data = await fetch_content()
     post = find_post(data, slug)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    bump_view(slug)
     return html_no_cache(build_post(data, post))
 
 
@@ -1689,6 +1801,50 @@ async def about():
     return html_no_cache(build_about(data))
 
 
+# ============================================================
+#                  ADMIN PANEL ROUTES
+# ============================================================
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_root(request: Request):
+    if admin_authed(request):
+        return HTMLResponse(build_admin_dashboard(), headers=NO_CACHE_HEADERS)
+    err_html = ""
+    if request.query_params.get("error"):
+        err_html = '<div class="error">✗ Wrong password. Try again.</div>'
+    body = ADMIN_LOGIN_HTML.replace("__ERROR__", err_html)
+    return HTMLResponse(body, headers=NO_CACHE_HEADERS)
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    form = await request.form()
+    pw = (form.get("password") or "").strip()
+    if pw == ADMIN_PASSWORD:
+        token = secrets.token_urlsafe(32)
+        _admin_sessions[token] = time.time() + ADMIN_SESSION_TTL
+        resp = RedirectResponse("/admin", status_code=303)
+        resp.set_cookie(
+            "ghost_admin", token,
+            max_age=ADMIN_SESSION_TTL,
+            httponly=True, samesite="lax",
+        )
+        return resp
+    return RedirectResponse("/admin?error=1", status_code=303)
+
+
+@app.get("/admin/logout")
+async def admin_logout(request: Request):
+    token = request.cookies.get("ghost_admin")
+    if token:
+        _admin_sessions.pop(token, None)
+    resp = RedirectResponse("/admin", status_code=303)
+    resp.delete_cookie("ghost_admin")
+    return resp
+
+
+# ============================================================
+#                  JSON API ROUTES
+# ============================================================
 @app.get("/api/posts")
 async def api_posts():
     data = await fetch_content()
@@ -1712,7 +1868,7 @@ async def api_post(slug: str):
 
 
 @app.post("/api/comment")
-async def api_comment(payload: dict):
+async def api_comment(payload: dict, request: Request):
     slug = (payload.get("slug") or "").strip()
     author = (payload.get("author") or "").strip()
     text = (payload.get("text") or "").strip()
@@ -1732,6 +1888,13 @@ async def api_comment(payload: dict):
             exists = any(c["id"] == pid for c in get_comments(slug))
             if not exists:
                 pid = None
+
+    # 📌 Record commenter identity against their IP
+    try:
+        ip = get_client_ip(request)
+        record_commenter(ip, author, text)
+    except Exception:
+        pass
 
     c = add_comment(slug, author, text, pid)
     return JSONResponse({
@@ -1766,7 +1929,8 @@ async def refresh():
 async def startup():
     try:
         await fetch_content(force=True)
-        print("👻 Ghost Union Blog ready — content cached from remote JSON")
+        print("👻 Ghost Union Blog v2.2 — content cached from remote JSON")
+        print("🔐 Admin panel available at /admin")
     except Exception as e:
         print(f"⚠️  Could not fetch content on startup: {e}")
 
@@ -1776,6 +1940,7 @@ async def startup():
 # ============================================================
 if __name__ == "__main__":
     import uvicorn
-    print("👻 Ghost Union Blog v2.1 — Haunted Edition")
-    print("→ http://0.0.0.0:8000")
+    print("👻 Ghost Union Blog v2.2 — Analytics Edition")
+    print("→ Blog:  http://0.0.0.0:8000")
+    print("→ Admin: http://0.0.0.0:8000/admin")
     uvicorn.run(app, host="0.0.0.0", port=8000)
