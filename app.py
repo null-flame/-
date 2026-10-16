@@ -1,11 +1,16 @@
 """
-👻 Ghost Union Blog v2.2 — Analytics Edition
+👻 Ghost Union Blog v2.5 — RTL/LTR Bidi-Invisible Edition
 ============================================================
   ⚙ All configuration and content come from the remote JSON.
   ⚙ Threaded comments (with replies) stored in-memory.
   ⚙ Per-post view counter + IP tracking (in-memory).
   ⚙ Secure admin panel (password protected).
   ⚙ Light & Dark themes.
+  ⚙ Full RTL / LTR support with auto-detection + manual toggle.
+  ⚙ ★ BIDI FIX (invisible): Latin runs are auto-isolated via
+       <bdi dir="ltr"> so mixed text (سلام hi سلام) never scrambles,
+       but WITHOUT any visible box/border/background.
+  ⚙ Persian (Vazirmatn) + Latin fonts.
   ⚙ Zero extra dependencies.
   ⚙ Cache-busting for GitHub raw CDN.
   ⚙ Full-image rendering (no crops) + ghostly ambience.
@@ -37,6 +42,9 @@ CACHE_TTL = 50
 ADMIN_PASSWORD = "Gh0st#9x7"
 ADMIN_SESSION_TTL = 4 * 3600  # 4 hours
 
+# Languages that force RTL by default
+RTL_LANGS = {"fa", "ar", "he", "ur", "ps", "sd", "yi", "dv"}
+
 # ============================================================
 #                     IN-MEMORY STORES
 # ============================================================
@@ -45,9 +53,9 @@ _comments: dict = {}
 _comment_id = 0
 
 # --- analytics ---
-_views: dict = {}            # slug -> int
-_ips: dict = {}              # ip  -> {first_seen, last_seen, views, name, comments[], ua, pages[]}
-_admin_sessions: dict = {}   # token -> expiry_ts
+_views: dict = {}
+_ips: dict = {}
+_admin_sessions: dict = {}
 
 
 # ============================================================
@@ -118,7 +126,7 @@ def _blocking_fetch(etag: Optional[str], bust: bool = False):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "GhostUnionBlog/2.2",
+            "User-Agent": "GhostUnionBlog/2.5",
             "Accept": "application/json",
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
@@ -388,6 +396,17 @@ def cover_gradient(slug: str) -> str:
     return f"linear-gradient(135deg, hsl({h1},60%,22%) 0%, hsl({h2},65%,38%) 100%)"
 
 
+def detect_dir(site: dict, override: Optional[str] = None) -> str:
+    """Return 'rtl' or 'ltr' based on explicit override, site.dir, site.lang, or default."""
+    if override in ("rtl", "ltr"):
+        return override
+    explicit = (site.get("dir") or "").lower().strip()
+    if explicit in ("rtl", "ltr"):
+        return explicit
+    lang = (site.get("lang") or "en").lower().split("-")[0].strip()
+    return "rtl" if lang in RTL_LANGS else "ltr"
+
+
 # ============================================================
 #                  THREADED COMMENTS
 # ============================================================
@@ -445,10 +464,10 @@ def admin_authed(request: Request) -> bool:
 
 
 # ============================================================
-#                  HTML TEMPLATE  (Haunted Edition)
+#     HTML TEMPLATE  (RTL/LTR Bidi-Invisible Edition)
 # ============================================================
 HTML = r"""<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="{{ lang }}" dir="{{ dir }}" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -457,7 +476,7 @@ HTML = r"""<!DOCTYPE html>
 <title>{{ page_title }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;600&family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root, [data-theme="dark"] {
   --bg:#05070c; --bg-2:#0a0d16; --surface:#0f1420; --surface-2:#141a28;
@@ -489,12 +508,12 @@ HTML = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 body{
-  font-family:'Inter',system-ui,-apple-system,sans-serif;
-  color:var(--text); line-height:1.65; min-height:100vh;
+  font-family:'Vazirmatn','Inter',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
+  color:var(--text); line-height:1.7; min-height:100vh;
   transition:background-color .3s, color .3s;
   overflow-x:hidden; position:relative;
   text-rendering:optimizeLegibility;
-  font-feature-settings:"kern" 1,"liga" 1,"calt" 1,"ss01" 1;
+  font-feature-settings:"kern" 1,"liga" 1,"calt" 1;
   scrollbar-gutter:stable;
   background-color: var(--bg);
   background-image:
@@ -505,6 +524,8 @@ body{
   background-size: 44px 44px, 44px 44px, 100% 100%, 100% 100%;
   background-attachment: fixed, fixed, fixed, fixed;
 }
+html[dir="rtl"] body{ direction: rtl; text-align: right; }
+html[dir="ltr"] body{ direction: ltr; text-align: left; }
 [data-theme="light"] body{
   background-image:
     linear-gradient(rgba(109,40,217,var(--grid-op)) 1px, transparent 1px),
@@ -524,13 +545,14 @@ body::after{
   transform:scaleX(0);transform-origin:0 50%;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),var(--accent-3));
   z-index:200;pointer-events:none;will-change:transform;opacity:.9;}
+html[dir="rtl"] .scroll-progress{ transform-origin:100% 50%; }
 .ghost-swarm{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;contain:strict;}
 .ghost-swarm span{position:absolute;font-size:28px;color:var(--accent);
   text-shadow:0 0 14px var(--accent);opacity:.05;
   animation:ghostPulse 14s ease-in-out infinite;user-select:none;line-height:1;}
-.ghost-swarm span:nth-child(1){left:10%;top:22%;animation-delay:0s;font-size:32px}
-.ghost-swarm span:nth-child(2){left:84%;top:38%;animation-delay:-5s;font-size:22px}
-.ghost-swarm span:nth-child(3){left:32%;top:72%;animation-delay:-9s;font-size:38px}
+.ghost-swarm span:nth-child(1){inset-inline-start:10%;top:22%;animation-delay:0s;font-size:32px}
+.ghost-swarm span:nth-child(2){inset-inline-start:84%;top:38%;animation-delay:-5s;font-size:22px}
+.ghost-swarm span:nth-child(3){inset-inline-start:32%;top:72%;animation-delay:-9s;font-size:38px}
 @keyframes ghostPulse{0%,100%{opacity:.04}50%{opacity:.14}}
 a{color:var(--accent);text-decoration:none}
 img{max-width:100%;display:block}
@@ -542,7 +564,7 @@ p,.prose p,.hero p,.card-excerpt{text-wrap:pretty;}
 input,textarea,button{accent-color:var(--accent)}
 nav{position:sticky;top:0;z-index:50;
   background:color-mix(in srgb, var(--bg) 88%, transparent);
-  border-bottom:1px solid var(--border);position:relative;}
+  border-bottom:1px solid var(--border);}
 nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);
   opacity:.55;}
@@ -564,9 +586,10 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   color:var(--text-dim);transition:color .2s, background .2s;position:relative}
 .nav-links a:hover{color:var(--text);background:var(--surface-hover)}
 .nav-links a.active{color:var(--accent);background:var(--accent-soft)}
-.nav-links a::after{content:"";position:absolute;left:14px;right:14px;bottom:4px;height:1px;
+.nav-links a::after{content:"";position:absolute;inset-inline:14px;bottom:4px;height:1px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2));
   transform:scaleX(0);transform-origin:left;transition:transform .25s;}
+html[dir="rtl"] .nav-links a::after{ transform-origin:right; }
 .nav-links a:hover::after,.nav-links a.active::after{transform:scaleX(1)}
 .nav-chat{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;
   border-radius:11px;font-size:13.5px;font-weight:700;
@@ -575,13 +598,16 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   transition:transform .2s, box-shadow .2s;white-space:nowrap}
 .nav-chat:hover{transform:translate3d(0,-1px,0);box-shadow:0 6px 22px var(--accent-glow)}
 .nav-chat:active{transform:translate3d(0,0,0)}
-.theme-toggle{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);
-  background:var(--surface);color:var(--text);font-size:16px;cursor:pointer;
+.icon-btn{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font-size:15px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  transition:background .25s, border-color .25s, color .25s, transform .4s}
-.theme-toggle:hover{background:var(--surface-hover);border-color:var(--accent);
+  transition:background .25s, border-color .25s, color .25s, transform .4s;
+  font-family:'JetBrains Mono',monospace;font-weight:700}
+.icon-btn:hover{background:var(--surface-hover);border-color:var(--accent);
   color:var(--accent);transform:rotate(180deg)}
-@media(max-width:640px){ .nav-links a:not(.nav-chat){display:none} }
+.dir-toggle{font-family:'Vazirmatn','Inter',sans-serif;font-size:12.5px;font-weight:700}
+.dir-toggle:hover{ transform:none; }
+@media(max-width:700px){ .nav-links a:not(.nav-chat){display:none} }
 .container{max-width:1120px;margin:0 auto;padding:36px 22px 80px;position:relative;z-index:2}
 .hero{padding:56px 0 46px;border-bottom:1px solid var(--border);
   margin-bottom:44px;position:relative}
@@ -589,7 +615,7 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   top:-60px;left:-40px;right:-40px;bottom:-40px;
   background:radial-gradient(ellipse at 30% 40%, var(--accent-glow) 0%, transparent 55%);
   z-index:-1;pointer-events:none;opacity:.35;}
-.hero::after{content:"";position:absolute;top:20px;right:20px;width:56px;height:56px;
+.hero::after{content:"";position:absolute;top:20px;inset-inline-end:20px;width:56px;height:56px;
   background:
     linear-gradient(var(--accent),var(--accent)) left top/14px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) left top/1px 14px no-repeat,
@@ -600,18 +626,21 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   color:var(--accent-2);letter-spacing:4px;text-transform:uppercase;margin-bottom:16px;
   padding:5px 12px;border-radius:20px;
   background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);position:relative}
-.hero .tagline::before{content:"";position:absolute;left:-3px;top:50%;width:6px;height:6px;
+html[dir="rtl"] .hero .tagline{ letter-spacing:1px; }
+.hero .tagline::before{content:"";position:absolute;inset-inline-start:-3px;top:50%;width:6px;height:6px;
   border-radius:50%;background:var(--accent-2);transform:translate(-100%,-50%);
   box-shadow:0 0 8px var(--accent-2);}
-.hero h1{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:clamp(34px,5.5vw,60px);font-weight:700;
-  letter-spacing:-1.5px;line-height:1.05;margin-bottom:18px;
+html[dir="rtl"] .hero .tagline::before{ transform:translate(100%,-50%); }
+.hero h1{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
+  font-size:clamp(34px,5.5vw,60px);font-weight:800;
+  letter-spacing:-1.5px;line-height:1.1;margin-bottom:18px;
   background:linear-gradient(135deg,var(--text) 15%,var(--accent) 55%,var(--accent-2) 90%);
   -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.hero p{color:var(--text-dim);font-size:16.5px;max-width:660px;line-height:1.65}
-.hero .ghost-big{position:absolute;right:20px;top:40px;font-size:96px;color:var(--accent);
+html[dir="rtl"] .hero h1{ letter-spacing:-0.5px; }
+.hero p{color:var(--text-dim);font-size:16.5px;max-width:660px;line-height:1.75}
+.hero .ghost-big{position:absolute;inset-inline-end:20px;top:40px;font-size:96px;color:var(--accent);
   text-shadow:0 0 24px var(--accent);opacity:.08;pointer-events:none;user-select:none;line-height:1}
-@media(max-width:640px){.hero .ghost-big{font-size:64px;right:6px;top:20px;opacity:.06}}
+@media(max-width:640px){.hero .ghost-big{font-size:64px;inset-inline-end:6px;top:20px;opacity:.06}}
 .toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;
   justify-content:space-between;margin-bottom:32px}
 .search-box{position:relative;flex:1;min-width:220px;max-width:420px}
@@ -619,9 +648,10 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   border:1px solid var(--border);border-radius:12px;color:var(--text);
   font-size:14px;outline:none;
   transition:border-color .2s, box-shadow .2s, background .2s;font-family:inherit}
+html[dir="rtl"] .search-box input{ padding:12px 42px 12px 16px; }
 .search-box input::placeholder{color:var(--text-faint)}
 .search-box input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);background:var(--surface-2)}
-.search-box svg{position:absolute;left:15px;top:50%;transform:translateY(-50%);
+.search-box svg{position:absolute;inset-inline-start:15px;top:50%;transform:translateY(-50%);
   width:16px;height:16px;color:var(--text-faint);pointer-events:none}
 .tag-cloud{display:flex;flex-wrap:wrap;gap:7px;flex:1;justify-content:flex-end;
   max-height:120px;overflow-y:auto;padding:2px}
@@ -641,10 +671,10 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;
   transition:transform .3s cubic-bezier(.2,.7,.3,1), border-color .3s;
   position:relative;content-visibility:auto;contain-intrinsic-size:auto 460px}
-.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+.card::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:3px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2),var(--accent-3));
   opacity:0;transition:opacity .3s;z-index:4;}
-.card::after{content:"";position:absolute;top:12px;right:12px;width:20px;height:20px;
+.card::after{content:"";position:absolute;top:12px;inset-inline-end:12px;width:20px;height:20px;
   background:
     linear-gradient(var(--accent),var(--accent)) right top/12px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) right top/1px 12px no-repeat;
@@ -673,41 +703,44 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
 .card-cover .cover-placeholder{position:relative;z-index:1;width:100%;height:100%;
   display:flex;align-items:center;justify-content:center;
   font-size:64px;opacity:.4;border-radius:8px;}
-.card-featured{position:absolute;top:14px;left:14px;z-index:3;
+.card-featured{position:absolute;top:14px;inset-inline-start:14px;z-index:3;
   background:linear-gradient(135deg,var(--gold),#f59e0b);color:#000;
   font-size:10px;font-weight:800;padding:4px 11px;border-radius:20px;
   letter-spacing:1.2px;text-transform:uppercase}
+html[dir="rtl"] .card-featured{ letter-spacing:0; }
 .card-body{padding:20px 22px 22px;flex:1;display:flex;flex-direction:column}
 .card-meta{display:flex;align-items:center;gap:10px;font-size:11.5px;
   color:var(--text-faint);font-family:'JetBrains Mono',monospace;margin-bottom:12px}
 .card-meta .dot{width:3px;height:3px;border-radius:50%;background:var(--text-faint)}
-.card-title{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:20px;font-weight:700;line-height:1.28;letter-spacing:-.4px;margin-bottom:10px}
+.card-title{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
+  font-size:20px;font-weight:700;line-height:1.35;letter-spacing:-.3px;margin-bottom:10px}
 .card-title a{color:var(--text);
   background-image:linear-gradient(90deg,var(--accent),var(--accent-2));
   background-size:0% 2px;background-position:0 100%;background-repeat:no-repeat;
   padding-bottom:2px;
   transition:color .25s, background-size .35s cubic-bezier(.2,.7,.3,1);}
+html[dir="rtl"] .card-title a{ background-position:100% 100%; }
 .card-title a:hover{color:var(--accent);background-size:100% 2px}
-.card-excerpt{color:var(--text-dim);font-size:14px;line-height:1.65;flex:1;margin-bottom:16px}
+.card-excerpt{color:var(--text-dim);font-size:14px;line-height:1.7;flex:1;margin-bottom:16px}
 .card-footer{display:flex;align-items:center;gap:11px;padding-top:15px;
   border-top:1px solid var(--border);font-size:12.5px;position:relative}
-.card-footer::before{content:"";position:absolute;top:-1px;left:0;width:36px;height:1px;
+.card-footer::before{content:"";position:absolute;top:-1px;inset-inline-start:0;width:36px;height:1px;
   background:linear-gradient(90deg,var(--accent),transparent);}
+html[dir="rtl"] .card-footer::before{ background:linear-gradient(270deg,var(--accent),transparent); }
 .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;
   position:relative;
   box-shadow:0 0 0 2px var(--surface), 0 0 0 3px var(--accent-soft)}
 .card-author{color:var(--text-dim);font-weight:600;font-size:12.5px}
 .card-rank{color:var(--text-faint);font-size:11px;margin-top:1px}
-.card-tags{display:flex;gap:5px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.card-tags{display:flex;gap:5px;margin-inline-start:auto;flex-wrap:wrap;justify-content:flex-end}
 .card-tags span{font-size:10px;padding:3px 9px;border-radius:12px;
   background:var(--accent-soft);color:var(--accent);font-weight:600;
   font-family:'JetBrains Mono',monospace;letter-spacing:.2px;
   border:1px solid transparent;transition:border-color .2s}
 .card:hover .card-tags span{border-color:var(--accent-soft)}
 .post-header{max-width:780px;margin:0 auto 36px;position:relative}
-.post-header::before{content:"";position:absolute;top:-30px;left:-30px;width:44px;height:44px;
+.post-header::before{content:"";position:absolute;top:-30px;inset-inline-start:-30px;width:44px;height:44px;
   background:
     linear-gradient(var(--accent),var(--accent)) left top/16px 1px no-repeat,
     linear-gradient(var(--accent),var(--accent)) left top/1px 16px no-repeat;
@@ -716,20 +749,21 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
 .post-tags-row span{font-size:11px;padding:4px 11px;border-radius:20px;
   background:var(--accent-soft);color:var(--accent);font-weight:600;
   font-family:'JetBrains Mono',monospace}
-.post-header h1{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:clamp(30px,5vw,48px);font-weight:700;letter-spacing:-1.3px;
-  line-height:1.15;margin:0 0 22px}
+.post-header h1{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
+  font-size:clamp(30px,5vw,48px);font-weight:800;letter-spacing:-1px;
+  line-height:1.25;margin:0 0 22px}
 .post-meta{display:flex;align-items:center;flex-wrap:wrap;gap:16px;
   padding:18px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
   position:relative}
-.post-meta::after{content:"";position:absolute;bottom:-1px;left:0;width:80px;height:1px;
+.post-meta::after{content:"";position:absolute;bottom:-1px;inset-inline-start:0;width:80px;height:1px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);}
+html[dir="rtl"] .post-meta::after{ background:linear-gradient(270deg,var(--accent),var(--accent-2),transparent); }
 .post-meta .author-block{display:flex;align-items:center;gap:12px}
 .post-meta .avatar{width:44px;height:44px;font-size:17px;
   box-shadow:0 0 0 3px var(--surface), 0 0 0 4px var(--accent-soft)}
 .post-meta .author-name{font-weight:700;font-size:14.5px;color:var(--text)}
 .post-meta .author-rank{font-size:12px;color:var(--text-dim);margin-top:1px}
-.post-meta .meta-right{margin-left:auto;text-align:right;
+.post-meta .meta-right{margin-inline-start:auto;text-align:end;
   font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-faint)}
 .post-meta .meta-right .read{color:var(--accent-2);margin-top:3px}
 .post-cover{position:relative;border-radius:var(--radius);overflow:hidden;
@@ -747,55 +781,62 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
 .post-cover.no-img{height:200px;background:var(--grad, linear-gradient(135deg,#4c1d95,#0891b2))}
 .post-cover.no-img::before,.post-cover.no-img::after{display:none}
 .post-cover.no-img span{position:relative;z-index:1;font-size:72px;opacity:.3}
-.prose{max-width:780px;margin:0 auto;font-size:16.5px;line-height:1.85;color:var(--text)}
+.prose{max-width:780px;margin:0 auto;font-size:16.5px;line-height:1.9;color:var(--text)}
 .prose>*+*{margin-top:1.1em}
 .prose>p:first-of-type::first-letter{
-  font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:3.6em;line-height:.82;float:left;
+  font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
+  font-size:3.2em;line-height:.85;float:inline-start;
   margin:.06em .14em 0 0;color:var(--accent);font-weight:700;letter-spacing:-.02em;}
-@media(max-width:640px){
-  .prose>p:first-of-type::first-letter{font-size:2.8em;margin:.04em .1em 0 0}
+html[dir="rtl"] .prose>p:first-of-type::first-letter{
+  float:inline-start;margin:0 0 0 .14em;
 }
-.prose h2{font-family:'Space Grotesk','Inter',sans-serif;
-  font-size:27px;font-weight:700;letter-spacing:-.5px;
+@media(max-width:640px){
+  .prose>p:first-of-type::first-letter{font-size:2.6em;margin:.04em .1em 0 0}
+}
+.prose h2{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
+  font-size:27px;font-weight:800;letter-spacing:-.4px;
   margin:42px 0 16px;padding-bottom:10px;border-bottom:1px solid var(--border);position:relative}
-.prose h2::after{content:"";position:absolute;left:0;bottom:-1px;width:60px;height:2px;
+.prose h2::after{content:"";position:absolute;inset-inline-start:0;bottom:-1px;width:60px;height:2px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent)}
+html[dir="rtl"] .prose h2::after{ background:linear-gradient(270deg,var(--accent),var(--accent-2),transparent); }
 .prose h3{font-size:20px;font-weight:700;margin:32px 0 12px;letter-spacing:-.2px}
 .prose h4{font-size:17px;font-weight:700;margin:26px 0 10px}
 .prose p{margin-bottom:18px}
 .prose ul{list-style:none;margin:0 0 20px 0;padding:0}
-.prose ul>li{padding-left:22px;position:relative;margin-bottom:8px}
-.prose ul>li::before{content:"◆";position:absolute;left:0;top:0;color:var(--accent);
-  font-size:9px;line-height:2.4;opacity:.85;}
+.prose ul>li{padding-inline-start:22px;position:relative;margin-bottom:8px}
+.prose ul>li::before{content:"◆";position:absolute;inset-inline-start:0;top:0;color:var(--accent);
+  font-size:9px;line-height:2.6;opacity:.85;}
 .prose ul>li>ul{margin-top:8px}
 .prose ol{list-style:none;margin:0 0 20px 0;padding:0;counter-reset:ol-c}
-.prose ol>li{padding-left:36px;position:relative;margin-bottom:10px;counter-increment:ol-c}
-.prose ol>li::before{content:counter(ol-c);position:absolute;left:0;top:2px;
+.prose ol>li{padding-inline-start:36px;position:relative;margin-bottom:10px;counter-increment:ol-c}
+.prose ol>li::before{content:counter(ol-c);position:absolute;inset-inline-start:0;top:2px;
   width:24px;height:24px;border-radius:50%;background:var(--accent-soft);
   color:var(--accent);border:1px solid var(--accent-soft);
   font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;
   font-family:'JetBrains Mono',monospace;}
-.prose blockquote{border-left:3px solid var(--accent);padding:16px 22px;margin:24px 0;
+.prose blockquote{border-inline-start:3px solid var(--accent);padding:16px 22px;margin:24px 0;
   background:var(--surface);border-radius:0 12px 12px 0;color:var(--text-dim);
   font-style:italic;position:relative;}
-.prose blockquote::before{content:'"';position:absolute;top:-10px;left:14px;
+html[dir="rtl"] .prose blockquote{ border-radius:12px 0 0 12px; }
+.prose blockquote::before{content:'"';position:absolute;top:-10px;inset-inline-start:14px;
   font-size:56px;line-height:1;color:var(--accent);opacity:.22;font-family:Georgia,serif;}
-.prose blockquote::after{content:"";position:absolute;right:-1px;bottom:-1px;
-  width:18px;height:18px;border-right:1px solid var(--accent);
+.prose blockquote::after{content:"";position:absolute;inset-inline-end:-1px;bottom:-1px;
+  width:18px;height:18px;border-inline-end:1px solid var(--accent);
   border-bottom:1px solid var(--accent);opacity:.3;}
 .prose blockquote p:last-child{margin-bottom:0}
 .prose code{font-family:'JetBrains Mono',monospace;background:var(--surface-2);
   padding:2px 7px;border-radius:6px;font-size:13.5px;color:var(--accent-2);
-  border:1px solid var(--border);box-shadow:0 1px 0 var(--border-hi);font-weight:600;}
+  border:1px solid var(--border);box-shadow:0 1px 0 var(--border-hi);font-weight:600;
+  direction:ltr;unicode-bidi:embed;}
 .prose pre{background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
   padding:18px 20px;overflow-x:auto;margin:24px 0;position:relative;
-  box-shadow:var(--shadow-sm);}
-.prose pre::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;
+  box-shadow:var(--shadow-sm);direction:ltr;text-align:left;}
+.prose pre::before{content:"";position:absolute;inset-inline-start:0;top:14px;bottom:14px;width:2px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2));
   border-radius:2px;opacity:.6;}
 .prose pre code{background:none;padding:0;color:var(--text);
-  font-size:13.5px;line-height:1.65;border:none;box-shadow:none;font-weight:400;}
+  font-size:13.5px;line-height:1.65;border:none;box-shadow:none;font-weight:400;
+  direction:ltr;unicode-bidi:embed;}
 .prose img{border-radius:12px;margin:24px 0;border:1px solid var(--border);
   box-shadow:var(--shadow-md);width:100%;height:auto}
 .prose a{font-weight:600;text-decoration:underline;
@@ -811,20 +852,20 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   text-shadow:0 0 8px var(--accent-glow);}
 .prose table{width:100%;border-collapse:collapse;margin:24px 0;font-size:14.5px;
   border:1px solid var(--border);border-radius:12px;overflow:hidden;}
-.prose th, .prose td{padding:12px 16px;border-bottom:1px solid var(--border);text-align:left}
+.prose th, .prose td{padding:12px 16px;border-bottom:1px solid var(--border);text-align:start}
 .prose th{background:var(--surface-2);font-weight:700;font-size:13px;
   text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);}
 .prose tbody tr:nth-child(even){background:var(--surface-2)}
 .prose tr:last-child td{border-bottom:none}
 .related{max-width:780px;margin:56px auto 0}
-.related h3{font-family:'Space Grotesk','Inter',sans-serif;
+.related h3{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
   font-size:17px;font-weight:700;margin-bottom:18px;display:flex;align-items:center;gap:9px}
 .related-list{display:grid;gap:14px}
 @media(min-width:600px){.related-list{grid-template-columns:repeat(3,1fr)}}
 .related-item{background:var(--surface);border:1px solid var(--border);
   border-radius:14px;padding:16px;transition:border-color .3s, transform .3s;
   display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden}
-.related-item::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+.related-item::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:2px;
   background:linear-gradient(180deg,var(--accent),var(--accent-2));
   opacity:0;transition:opacity .3s;}
 .related-item:hover{border-color:var(--accent);transform:translate3d(0,-4px,0);
@@ -837,9 +878,10 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   font-family:'JetBrains Mono',monospace;margin-top:auto}
 .comments{max-width:780px;margin:64px auto 0;padding-top:36px;
   border-top:1px solid var(--border);position:relative}
-.comments::before{content:"";position:absolute;top:-1px;left:0;width:120px;height:1px;
+.comments::before{content:"";position:absolute;top:-1px;inset-inline-start:0;width:120px;height:1px;
   background:linear-gradient(90deg,var(--accent),var(--accent-2),transparent);}
-.comments h3{font-family:'Space Grotesk','Inter',sans-serif;
+html[dir="rtl"] .comments::before{ background:linear-gradient(270deg,var(--accent),var(--accent-2),transparent); }
+.comments h3{font-family:'Vazirmatn','Space Grotesk','Inter',sans-serif;
   font-size:19px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px}
 .comments h3 .count{background:var(--accent-soft);color:var(--accent);
   font-size:12px;padding:3px 11px;border-radius:14px;
@@ -853,7 +895,7 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   color:var(--text);font-size:14px;font-family:inherit;outline:none;
   transition:border-color .2s}
 .comment-form input:focus, .comment-form textarea:focus{border-color:var(--accent)}
-.comment-form textarea{resize:vertical;min-height:84px;line-height:1.6}
+.comment-form textarea{resize:vertical;min-height:84px;line-height:1.7}
 .comment-form button{padding:11px 26px;border-radius:10px;border:none;
   background:linear-gradient(135deg,var(--accent),var(--accent-2));
   color:#fff;font-weight:700;font-size:13.5px;cursor:pointer;
@@ -868,14 +910,15 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
 .comment{background:var(--surface);border:1px solid var(--border);
   border-radius:14px;padding:16px 18px;transition:border-color .2s;position:relative}
 .comment:hover{border-color:var(--border-hi)}
-.comment.reply{margin-left:0;background:var(--surface-2);
-  border-left:3px solid var(--accent);border-radius:0 12px 12px 0}
+.comment.reply{margin-inline-start:0;background:var(--surface-2);
+  border-inline-start:3px solid var(--accent);border-radius:0 12px 12px 0}
+html[dir="rtl"] .comment.reply{ border-radius:12px 0 0 12px; }
 .comment-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .comment-head .avatar{width:32px;height:32px;font-size:13px}
 .comment-author{font-weight:700;font-size:13.5px;color:var(--text)}
 .comment-time{font-size:11px;color:var(--text-faint);
-  font-family:'JetBrains Mono',monospace;margin-left:auto}
-.comment-text{font-size:14.5px;color:var(--text);line-height:1.7;
+  font-family:'JetBrains Mono',monospace;margin-inline-start:auto}
+.comment-text{font-size:14.5px;color:var(--text);line-height:1.75;
   white-space:pre-wrap;word-break:break-word}
 .comment-actions{margin-top:10px;display:flex;gap:8px}
 .comment-actions button{background:none;border:none;color:var(--text-faint);
@@ -883,13 +926,13 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   border-radius:8px;transition:color .2s, background .2s;font-family:inherit;
   display:inline-flex;align-items:center;gap:5px}
 .comment-actions button:hover{color:var(--accent);background:var(--accent-soft)}
-.comment-replies{margin-top:14px;margin-left:20px;padding-left:16px;
-  border-left:2px solid var(--border);display:flex;flex-direction:column;gap:12px;
+.comment-replies{margin-top:14px;margin-inline-start:20px;padding-inline-start:16px;
+  border-inline-start:2px solid var(--border);display:flex;flex-direction:column;gap:12px;
   position:relative}
-.comment-replies::before{content:"";position:absolute;left:-2px;top:0;bottom:0;
+.comment-replies::before{content:"";position:absolute;inset-inline-start:-2px;top:0;bottom:0;
   width:2px;background:linear-gradient(180deg,var(--accent),transparent 60%);opacity:.6;}
 .reply-slot{}
-.reply-form{margin-top:12px;margin-left:20px;padding:14px 16px;
+.reply-form{margin-top:12px;margin-inline-start:20px;padding:14px 16px;
   background:var(--surface-2);border:1px solid var(--accent);
   border-radius:12px;display:flex;flex-direction:column;gap:9px;
   animation:slideIn .22s ease}
@@ -899,7 +942,7 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   color:var(--text);font-size:13.5px;font-family:inherit;outline:none;
   transition:border-color .2s}
 .reply-form input:focus, .reply-form textarea:focus{border-color:var(--accent)}
-.reply-form textarea{resize:vertical;min-height:62px;line-height:1.55}
+.reply-form textarea{resize:vertical;min-height:62px;line-height:1.6}
 .reply-form-actions{display:flex;gap:8px;justify-content:flex-end}
 .reply-form-actions button{padding:8px 18px;border-radius:9px;
   font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;
@@ -918,6 +961,10 @@ nav::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   font-weight:600;color:var(--text-dim);margin-bottom:26px;
   padding:8px 14px;border-radius:10px;transition:color .2s, background .2s}
 .back-link:hover{color:var(--accent);background:var(--accent-soft)}
+.back-link .arrow{ display:inline-block; transition:transform .2s; }
+html[dir="rtl"] .back-link .arrow{ transform:scaleX(-1); }
+.back-link:hover .arrow{ transform:translateX(-3px); }
+html[dir="rtl"] .back-link:hover .arrow{ transform:scaleX(-1) translateX(-3px); }
 footer{border-top:1px solid var(--border);padding:34px 22px;text-align:center;
   color:var(--text-faint);font-size:12.5px;
   font-family:'JetBrains Mono',monospace;line-height:1.9;position:relative}
@@ -946,8 +993,8 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
   .card-title{font-size:18px}
   .toolbar{flex-direction:column;align-items:stretch}
   .tag-cloud{justify-content:flex-start;max-height:none}
-  .comment-replies{margin-left:10px;padding-left:12px}
-  .reply-form{margin-left:10px}
+  .comment-replies{margin-inline-start:10px;padding-inline-start:12px}
+  .reply-form{margin-inline-start:10px}
   .card-cover{padding:10px}
   .hero::after{width:40px;height:40px}
 }
@@ -959,6 +1006,53 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
     scroll-behavior:auto !important;
   }
   .ghost-swarm span{animation:none !important}
+}
+
+/* ============================================================
+   ★ BIDI FIX — INVISIBLE RTL/LTR mixed-text rendering
+   ------------------------------------------------------------
+   - `unicode-bidi: plaintext` on text blocks makes each paragraph
+     auto-detect its base direction from its first strong char.
+   - English runs are wrapped in <bdi dir="ltr"> which behaves as
+     an ATOMIC inline element (a "virtual word") that keeps its own
+     internal LTR order while flowing naturally inside Persian text.
+   - NO visual styling at all — no background, no border, no padding.
+     Pure bidi isolation. The DOM has <bdi> but the user sees nothing.
+   ============================================================ */
+.prose p, .prose li, .prose h1, .prose h2, .prose h3, .prose h4,
+.prose h5, .prose h6, .prose td, .prose th, .prose blockquote,
+.prose dd, .prose dt,
+.card-title, .card-excerpt, .card-author, .card-rank, .card-meta,
+.comment-text, .comment-author, .comment-time,
+.hero p, .post-header h1, .post-meta .author-name, .post-meta .author-rank,
+.post-meta .meta-right, .related-item a,
+.back-link, .tagline, .empty p, .no-comments,
+footer, nav .nav-logo {
+  unicode-bidi: plaintext;
+}
+
+/* Pure isolation — no visual side effects whatsoever */
+bdi,
+.bidi-ltr {
+  unicode-bidi: isolate;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  display: inline;
+  line-height: inherit;
+  vertical-align: baseline;
+  text-decoration: inherit;
+  font: inherit;
+  color: inherit;
+}
+bdi[dir="ltr"],
+.bidi-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 </style>
 </head>
@@ -974,9 +1068,10 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
     <div class="nav-spacer"></div>
     {{ chat_link }}
     <div class="nav-links">
-      <a href="/" class="{{ active_home }}">Blog</a>
-      <a href="/about" class="{{ active_about }}">About</a>
-      <button class="theme-toggle" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+      <a href="/" class="{{ active_home }}">{{ t_blog }}</a>
+      <a href="/about" class="{{ active_about }}">{{ t_about }}</a>
+      <button class="icon-btn dir-toggle" id="dirBtn" title="{{ t_dir_toggle }}" aria-label="{{ t_dir_toggle }}">RTL</button>
+      <button class="icon-btn" id="themeBtn" title="{{ t_theme_toggle }}" aria-label="{{ t_theme_toggle }}">◐</button>
     </div>
   </div>
 </nav>
@@ -987,18 +1082,31 @@ footer .sub{opacity:.55;font-size:11px;margin-top:4px}
 
 <footer>
   <div><span class="ghost">👻</span> {{ site_name }} — {{ site_tagline }}</div>
-  <div class="sub">Powered by FastAPI · Content via remote JSON</div>
+  <div class="sub">{{ t_footer }}</div>
 </footer>
 
 <script>
 (function(){
-  var saved = localStorage.getItem('ghost_theme');
-  if (!saved) {
-    saved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  var root = document.documentElement;
+  // ---- Theme ----
+  var savedTheme = localStorage.getItem('ghost_theme');
+  if (!savedTheme) {
+    savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
-  document.documentElement.setAttribute('data-theme', saved);
-  var b = document.getElementById('themeBtn');
-  if (b) b.textContent = saved === 'dark' ? '◐' : '☀';
+  root.setAttribute('data-theme', savedTheme);
+  var tb = document.getElementById('themeBtn');
+  if (tb) tb.textContent = savedTheme === 'dark' ? '◐' : '☀';
+
+  // ---- Direction ----
+  var serverDir = root.getAttribute('dir') || 'ltr';
+  var params = new URLSearchParams(window.location.search);
+  var urlDir = params.get('dir');
+  var savedDir = localStorage.getItem('ghost_dir');
+  var finalDir = (urlDir === 'rtl' || urlDir === 'ltr') ? urlDir
+               : (savedDir === 'rtl' || savedDir === 'ltr') ? savedDir
+               : serverDir;
+  root.setAttribute('dir', finalDir);
+  if (savedDir !== finalDir) localStorage.setItem('ghost_dir', finalDir);
 })();
 document.getElementById('themeBtn').addEventListener('click', function(){
   var cur = document.documentElement.getAttribute('data-theme');
@@ -1007,6 +1115,23 @@ document.getElementById('themeBtn').addEventListener('click', function(){
   localStorage.setItem('ghost_theme', next);
   this.textContent = next === 'dark' ? '◐' : '☀';
 });
+(function(){
+  var db = document.getElementById('dirBtn');
+  function updateDirBtn(){
+    var cur = document.documentElement.getAttribute('dir');
+    if (db) db.textContent = cur === 'rtl' ? 'RTL' : 'LTR';
+  }
+  updateDirBtn();
+  if (db) {
+    db.addEventListener('click', function(){
+      var cur = document.documentElement.getAttribute('dir');
+      var next = cur === 'rtl' ? 'ltr' : 'rtl';
+      document.documentElement.setAttribute('dir', next);
+      localStorage.setItem('ghost_dir', next);
+      updateDirBtn();
+    });
+  }
+})();
 (function(){
   var bar = document.getElementById('scrollProgress');
   if (!bar) return;
@@ -1024,6 +1149,106 @@ document.getElementById('themeBtn').addEventListener('click', function(){
   window.addEventListener('resize', update, { passive: true });
   update();
 })();
+
+/* ============================================================
+   ★ BIDI ISOLATOR — auto-wrap Latin runs in <bdi dir="ltr">
+   ------------------------------------------------------------
+   Invisible bidi isolation. No visual box. Each Latin run becomes
+   an atomic "virtual word" so "سلام hi سلام" never scrambles.
+   ============================================================ */
+(function(){
+  'use strict';
+
+  var LATIN = 'A-Za-z\\u00C0-\\u024F\\u1E00-\\u1EFF';
+  var LATIN_TEST = /[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]/;
+
+  var INNER = '0-9\\s.,!?;:\'"()\\[\\]{}\\-_@#$%^&*+=/\\\\|<>~`';
+
+  var LTR_RUN = new RegExp(
+    '[' + LATIN + '](?:[' + LATIN + INNER + ']*[' + LATIN + '0-9])?',
+    'g'
+  );
+
+  function isInsideSkipped(el){
+    var cur = el;
+    while (cur) {
+      var tag = cur.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'CODE' ||
+          tag === 'PRE' || tag === 'BDI' ||
+          tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' ||
+          tag === 'OPTION') {
+        return true;
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
+
+  function wrapTextNode(node){
+    var text = node.nodeValue;
+    if (!text || !LATIN_TEST.test(text)) return;
+
+    LTR_RUN.lastIndex = 0;
+    var parts = [];
+    var lastIdx = 0;
+    var m, changed = false;
+
+    while ((m = LTR_RUN.exec(text)) !== null) {
+      var raw = m[0];
+      var trimmed = raw.replace(/[\s]+$/, '');
+      var trailing = raw.slice(trimmed.length);
+      if (!trimmed || !LATIN_TEST.test(trimmed)) continue;
+
+      if (m.index > lastIdx) {
+        parts.push(document.createTextNode(text.slice(lastIdx, m.index)));
+      }
+
+      var bdi = document.createElement('bdi');
+      bdi.setAttribute('dir', 'ltr');
+      bdi.className = 'bidi-ltr';
+      bdi.textContent = trimmed;
+      parts.push(bdi);
+
+      if (trailing) parts.push(document.createTextNode(trailing));
+      lastIdx = m.index + raw.length;
+      changed = true;
+    }
+
+    if (!changed) return;
+    if (lastIdx < text.length) {
+      parts.push(document.createTextNode(text.slice(lastIdx)));
+    }
+
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < parts.length; i++) frag.appendChild(parts[i]);
+    try { node.parentNode.replaceChild(frag, node); } catch (e) {}
+  }
+
+  function isolateBidi(root){
+    if (!root || !root.nodeType) return;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    var n;
+    while ((n = walker.nextNode())) {
+      if (!isInsideSkipped(n.parentElement)) nodes.push(n);
+    }
+    for (var i = 0; i < nodes.length; i++) {
+      try { wrapTextNode(nodes[i]); } catch (e) {}
+    }
+  }
+
+  window.GhostBidi = { isolate: isolateBidi };
+
+  function ready(fn){
+    if (document.readyState !== 'loading') fn();
+    else document.addEventListener('DOMContentLoaded', fn);
+  }
+
+  ready(function(){
+    isolateBidi(document.body);
+  });
+})();
+
 var searchInput = document.getElementById('searchInput');
 if (searchInput) {
   var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
@@ -1074,7 +1299,7 @@ if (cForm) {
 }
 function submitComment(slug, author, text, parentId, formEl, done){
   var btn = formEl.querySelector('button[type="submit"]');
-  if (btn) { btn.disabled = true; btn.dataset.orig = btn.textContent; btn.textContent = 'Posting…'; }
+  if (btn) { btn.disabled = true; btn.dataset.orig = btn.textContent; btn.textContent = '…'; }
   fetch('/api/comment', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -1091,7 +1316,7 @@ function submitComment(slug, author, text, parentId, formEl, done){
     if (done) done(false);
   })
   .finally(function(){
-    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.orig || 'Post Comment'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.orig || '✓'; }
   });
 }
 function insertComment(c, parentId){
@@ -1133,6 +1358,9 @@ function insertComment(c, parentId){
     wrap.className = 'comment-thread';
     wrap.appendChild(div);
     list.appendChild(wrap);
+  }
+  if (window.GhostBidi) {
+    try { window.GhostBidi.isolate(div); } catch (e) {}
   }
   div.scrollIntoView({ behavior:'smooth', block:'center' });
   var cnt = document.getElementById('commentCount');
@@ -1201,10 +1429,10 @@ if ('IntersectionObserver' in window) {
 """
 
 # ============================================================
-#                  ADMIN TEMPLATES
+#                  ADMIN TEMPLATES (unchanged)
 # ============================================================
 ADMIN_LOGIN_HTML = r"""<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" dir="ltr" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1280,7 +1508,7 @@ button:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(167,139,250,.
 ADMIN_DASH_CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 body{
-  font-family:'Inter',system-ui,sans-serif;
+  font-family:'Vazirmatn','Inter',system-ui,sans-serif;
   background:#05070c;color:#e9eef8;min-height:100vh;
   background-image:
     radial-gradient(ellipse 900px 700px at 10% 5%, rgba(167,139,250,.16) 0%, transparent 55%),
@@ -1315,7 +1543,7 @@ body{
   padding:20px;position:relative;overflow:hidden;
 }
 .stat::before{
-  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:3px;
   background:linear-gradient(180deg,#a78bfa,#22d3ee);
 }
 .stat .label{font-size:11px;color:#5b6884;font-weight:600;
@@ -1338,12 +1566,13 @@ table{
   background:#0f1420;border:1px solid #1b2333;border-radius:12px;
   overflow:hidden;
 }
-th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #1b2333}
+th,td{padding:12px 16px;text-align:start;border-bottom:1px solid #1b2333}
 th{background:#0a0d16;font-weight:700;font-size:11px;
   text-transform:uppercase;letter-spacing:.6px;color:#96a3ba}
 tbody tr:last-child td{border-bottom:none}
 tbody tr:hover{background:#141a28}
-td.mono{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#22d3ee}
+td.mono{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#22d3ee;
+  direction:ltr;unicode-bidi:embed}
 td.name{color:#fbbf24;font-weight:700}
 td.snippet{color:#96a3ba;max-width:340px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
@@ -1357,7 +1586,8 @@ td .no{color:#5b6884}
 .empty{padding:36px;text-align:center;color:#5b6884;font-size:13px;
   background:#0f1420;border:1px dashed #1b2333;border-radius:12px}
 .ua{font-size:11px;color:#5b6884;font-family:'JetBrains Mono',monospace;
-  max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  direction:ltr;unicode-bidi:embed}
 @media(max-width:700px){
   table{font-size:12px}
   th,td{padding:9px 10px}
@@ -1372,7 +1602,6 @@ def build_admin_dashboard() -> str:
     total_comments = sum(len(v) for v in _comments.values())
     commenters = sum(1 for e in _ips.values() if e.get("name"))
 
-    # Per-post table
     post_rows = []
     for slug, cnt in sorted(_views.items(), key=lambda kv: -kv[1]):
         post_rows.append(
@@ -1386,7 +1615,6 @@ def build_admin_dashboard() -> str:
         + "</tbody></table>"
     )
 
-    # IP table
     ip_rows = []
     for ip, e in sorted(_ips.items(), key=lambda kv: -kv[1].get("last_seen", 0)):
         name = e.get("name") or "—"
@@ -1424,12 +1652,12 @@ def build_admin_dashboard() -> str:
     )
 
     return f"""<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" dir="ltr" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>👻 Ghost Union · Admin Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>{ADMIN_DASH_CSS}</style>
 </head>
 <body>
@@ -1477,11 +1705,39 @@ def build_admin_dashboard() -> str:
 # ============================================================
 #                  TEMPLATE RENDERING
 # ============================================================
-def render_page(content: str, site: dict, active: str = "home", page_title: str = "") -> str:
+I18N = {
+    "en": {
+        "blog": "Blog",
+        "about": "About",
+        "theme_toggle": "Toggle theme",
+        "dir_toggle": "Toggle direction (LTR/RTL)",
+        "footer": "Powered by FastAPI · Content via remote JSON",
+    },
+    "fa": {
+        "blog": "وبلاگ",
+        "about": "درباره",
+        "theme_toggle": "تغییر پوسته",
+        "dir_toggle": "تغییر جهت نوشتار",
+        "footer": "قدرت‌گرفته از FastAPI · محتوا از JSON راه دور",
+    },
+}
+
+
+def _i18n(lang: str) -> dict:
+    lang = (lang or "en").lower().split("-")[0]
+    return I18N.get(lang, I18N["en"])
+
+
+def render_page(content: str, site: dict, active: str = "home",
+                page_title: str = "", dir_override: Optional[str] = None) -> str:
     name = site.get("name", "Ghost Union")
     title = f"{page_title} · {name}" if page_title else name
     tagline = site.get("tagline", "Silent. Precise. Unified.")
     description = site.get("description", "")
+
+    lang = (site.get("lang") or "en").strip() or "en"
+    direction = detect_dir(site, dir_override)
+    t = _i18n(lang)
 
     logo_html = (
         f'<img src="{html.escape(site["logo"])}" alt="">'
@@ -1495,6 +1751,8 @@ def render_page(content: str, site: dict, active: str = "home", page_title: str 
     )
 
     out = HTML
+    out = out.replace("{{ lang }}", html.escape(lang, quote=True))
+    out = out.replace("{{ dir }}", direction)
     out = out.replace("{{ site_description }}", html.escape(description, quote=True))
     out = out.replace("{{ page_title }}", html.escape(title))
     out = out.replace("{{ logo_html }}", logo_html)
@@ -1503,6 +1761,11 @@ def render_page(content: str, site: dict, active: str = "home", page_title: str 
     out = out.replace("{{ chat_link }}", chat_link)
     out = out.replace("{{ active_home }}", "active" if active == "home" else "")
     out = out.replace("{{ active_about }}", "active" if active == "about" else "")
+    out = out.replace("{{ t_blog }}", html.escape(t["blog"]))
+    out = out.replace("{{ t_about }}", html.escape(t["about"]))
+    out = out.replace("{{ t_theme_toggle }}", html.escape(t["theme_toggle"]))
+    out = out.replace("{{ t_dir_toggle }}", html.escape(t["dir_toggle"]))
+    out = out.replace("{{ t_footer }}", html.escape(t["footer"]))
     out = out.replace("{{ content|safe }}", content)
     return out
 
@@ -1510,7 +1773,7 @@ def render_page(content: str, site: dict, active: str = "home", page_title: str 
 # ============================================================
 #                  HTML BUILDERS
 # ============================================================
-def build_home(data: dict) -> str:
+def build_home(data: dict, dir_override: Optional[str] = None) -> str:
     site = get_site(data)
     posts = get_posts(data)
     tags = tag_counts(posts)
@@ -1521,7 +1784,7 @@ def build_home(data: dict) -> str:
       <div class="tagline">{html.escape(site.get('tagline', 'Silent. Precise. Unified.'))}</div>
       <h1>{html.escape(site.get('name', 'Ghost Union'))}</h1>
       <p>{html.escape(site.get('description', 'Field notes from the operators of the Ghost Union.'))}</p>
-      {f'<a class="chat-cta" href="{html.escape(site["chat_url"])}" target="_blank" rel="noopener">💬 Join the Chat Room</a>' if site.get('chat_url') else ''}
+      {f'<a class="chat-cta" href="{html.escape(site["chat_url"])}" target="_blank" rel="noopener">💬 Chat Room ↗</a>' if site.get('chat_url') else ''}
     </div>
     """]
 
@@ -1598,7 +1861,7 @@ def build_home(data: dict) -> str:
         parts.append('<div class="empty" id="searchEmpty" style="display:none">'
                      '<div class="icon">🔍</div><p>No posts match your search.</p></div>')
 
-    return render_page("\n".join(parts), site, active="home")
+    return render_page("\n".join(parts), site, active="home", dir_override=dir_override)
 
 
 def render_comment_node(c: dict) -> str:
@@ -1629,7 +1892,7 @@ def render_comment_node(c: dict) -> str:
     """
 
 
-def build_post(data: dict, post: dict) -> str:
+def build_post(data: dict, post: dict, dir_override: Optional[str] = None) -> str:
     site = get_site(data)
     author = post.get("author", "Unknown")
     color = author_avatar(author)
@@ -1656,7 +1919,7 @@ def build_post(data: dict, post: dict) -> str:
     pviews = _views.get(slug, 0)
 
     parts = [f"""
-    <a class="back-link" href="/">← Back to all posts</a>
+    <a class="back-link" href="/"><span class="arrow">←</span> Back to all posts</a>
     <article>
       <header class="post-header">
         <div class="post-tags-row">{tags_html}</div>
@@ -1712,10 +1975,11 @@ def build_post(data: dict, post: dict) -> str:
         parts.append('<div class="no-comments">No comments yet. Be the first to speak.</div>')
     parts.append("</div></section>")
 
-    return render_page("\n".join(parts), site, active="home", page_title=post.get("title", "Post"))
+    return render_page("\n".join(parts), site, active="home",
+                       page_title=post.get("title", "Post"), dir_override=dir_override)
 
 
-def build_about(data: dict) -> str:
+def build_about(data: dict, dir_override: Optional[str] = None) -> str:
     site = get_site(data)
     chat_btn = (
         f'<a class="chat-cta" href="{html.escape(site["chat_url"])}" '
@@ -1741,7 +2005,8 @@ def build_about(data: dict) -> str:
       {chat_btn}
     </div>
     """]
-    return render_page("\n".join(parts), site, active="about", page_title="About")
+    return render_page("\n".join(parts), site, active="about",
+                       page_title="About", dir_override=dir_override)
 
 
 # ============================================================
@@ -1756,6 +2021,11 @@ NO_CACHE_HEADERS = {
 
 def html_no_cache(body: str) -> HTMLResponse:
     return HTMLResponse(content=body, headers=NO_CACHE_HEADERS)
+
+
+def get_dir_override(request: Request) -> Optional[str]:
+    d = (request.query_params.get("dir") or "").lower().strip()
+    return d if d in ("rtl", "ltr") else None
 
 
 # ============================================================
@@ -1780,9 +2050,9 @@ async def visitor_tracker(request: Request, call_next):
 #                  ROUTES
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
-async def home():
+async def home(request: Request):
     data = await fetch_content()
-    return html_no_cache(build_home(data))
+    return html_no_cache(build_home(data, get_dir_override(request)))
 
 
 @app.get("/post/{slug}", response_class=HTMLResponse)
@@ -1792,13 +2062,13 @@ async def post_view(slug: str, request: Request):
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     bump_view(slug)
-    return html_no_cache(build_post(data, post))
+    return html_no_cache(build_post(data, post, get_dir_override(request)))
 
 
 @app.get("/about", response_class=HTMLResponse)
-async def about():
+async def about(request: Request):
     data = await fetch_content()
-    return html_no_cache(build_about(data))
+    return html_no_cache(build_about(data, get_dir_override(request)))
 
 
 # ============================================================
@@ -1889,7 +2159,6 @@ async def api_comment(payload: dict, request: Request):
             if not exists:
                 pid = None
 
-    # 📌 Record commenter identity against their IP
     try:
         ip = get_client_ip(request)
         record_commenter(ip, author, text)
@@ -1929,7 +2198,7 @@ async def refresh():
 async def startup():
     try:
         await fetch_content(force=True)
-        print("👻 Ghost Union Blog v2.2 — content cached from remote JSON")
+        print("👻 Ghost Union Blog v2.5 — RTL/LTR Bidi-Invisible Edition")
         print("🔐 Admin panel available at /admin")
     except Exception as e:
         print(f"⚠️  Could not fetch content on startup: {e}")
@@ -1940,7 +2209,7 @@ async def startup():
 # ============================================================
 if __name__ == "__main__":
     import uvicorn
-    print("👻 Ghost Union Blog v2.2 — Analytics Edition")
+    print("👻 Ghost Union Blog v2.5 — RTL/LTR Bidi-Invisible Edition")
     print("→ Blog:  http://0.0.0.0:8000")
     print("→ Admin: http://0.0.0.0:8000/admin")
     uvicorn.run(app, host="0.0.0.0", port=8000)
