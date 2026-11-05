@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Ghost Union</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&family=JetBrains+Mono:wght@400&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/blog/style.css">
+</head>
+<body>
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <span class="ghost-icon">👻</span>
+      <span id="site-name">Ghost Union</span>
+    </a>
+    <div class="nav-spacer"></div>
+    <a class="nav-chat" href="/chat">💬 Chat</a>
+    <div class="nav-links">
+      <a href="/" id="nav-home">Blog</a>
+      <a href="/about" id="nav-about">About</a>
+      <button class="icon-btn dir-toggle" id="dirBtn">RTL</button>
+      <button class="icon-btn" id="themeBtn">◐</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container" id="app">
+  <div class="empty"><div class="icon">👻</div><p>Loading…</p></div>
+</div>
+
+<footer>
+  <div><span class="ghost">👻</span> <span id="footer-name">Ghost Union</span></div>
+  <div class="sub">Powered by FastAPI · REST API</div>
+</footer>
+
+<script src="/static/blog/app.js"></script>
+</body>
+</html>
