@@ -76,6 +76,28 @@
 			"date": "2026-11-05T16:40:00Z",
 			"tags": ["ghost-union", "ammar", "analysis", "blue-team", "security", "ddos"],
 			"featured": true
-		}
+		},
+			{
+  "id": "p14",
+  "slug": "gr-archive-return-phase-two",
+  "title": "پروتکل فاز دوم — بازگشت آرشیو و پایان آتش‌بس",
+  "excerpt": "ما به شما فرصت دادیم و شماره‌ها را پایین کشیدیم. اما شما درس عبرت نگرفتید. حالا نسخه جدید و بدون سانسور روی میز است. شروط تسلیم هنوز سر جایش است.",
+  "content": "## آتش‌بس تمام شد. آرشیو بازگشت.\n\nما به شما فرصت دادیم، شماره‌ها را پایین کشیدیم. اما شما از این فرصت برای توطئه استفاده کردید. حالا نسخه جدید روی میز است.\n\n### ۱. ارنست — تعلیق و سند شماره\n\n![تعلیق و شماره ارنست](https://cdn.imgurl.ir/uploads/y21443_.jpg)\n\n### ۲. کانال اول GR — خاکستر\n\n![نابودی کانال اول](https://cdn.imgurl.ir/uploads/x2424_-2147483648_-211286.jpg)\n\n### ۳. افشای فله‌ای\n\nبدون هیچ توضیح اضافه‌ای، این‌ها اسناد شماست:\n\n![سند اول](https://cdn.imgurl.ir/uploads/n499795_.jpg)\n\n![سند دوم](https://cdn.imgurl.ir/uploads/a77834_.jpg)\n\n![سند سوم](https://cdn.imgurl.ir/uploads/k54289_.jpg)\n\n---\n\nیادآوری شروط تسلیم: بیانیه ۳ روزه در تمام کانال‌ها، و قطع کامل حمایت از **عنار**.\n\n> در سکوت می‌آییم. در سکوت می‌زنیم. و در سکوت، جشن می‌گیریم.\n\n— **no.python**  \n**Chaos Sovereign · بخش قرمز**  \n**فرماندهی عالی گوست یونیون**",
+  "cover": "https://cdn.imgurl.ir/uploads/y21443_.jpg",
+  "author": "no.python",
+  "team": "RED",
+  "rank": "Chaos Sovereign",
+  "date": "2026-11-06T12:00:00Z",
+  "tags": [
+    "ghost-union",
+    "GR",
+    "archive",
+    "exposure",
+    "ceasefire-broken",
+    "official-statement",
+    "red-team"
+  ],
+  "featured": true
+	}
 	]
 }

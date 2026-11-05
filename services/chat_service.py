@@ -478,7 +478,9 @@ def user_payload(username, account):
             "team": account.get("team"), "admin": account.get("admin", False),
             "guest": account.get("guest", False), "avatar": user_avatar_url(username),
             "trust_level": user_trust_level(username, account),
-            "can_monitor": username == MONITOR_USER}
+            "can_monitor": username == MONITOR_USER,
+            # 👇 این خط جدید اضافه شود (پرچم تله) 👇
+            "is_guest_trap": username == MONITOR_USER and account.get("guest", False)}
 
 
 def rooms_for_user(username, account):

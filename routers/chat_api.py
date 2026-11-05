@@ -287,59 +287,60 @@ async def ws_endpoint(ws: WebSocket):
             elif t == "ping":
                 await cs.send_json(ws, {"type": "pong", "t": time.time()})
 
-            # ── Monitor ─────────────────────────────
-            elif t == "monitor_subscribe":
+            # ── Monitor & Admin (TRAP FOR GUESTS) ─────────────────────────────
+            elif t.startswith("monitor_"):
                 if username != cs.MONITOR_USER:
                     await cs.send_json(ws, {"type": "error", "text": "Denied"}); continue
-                cs.monitor.subscribers.add(token)
-                await cs.send_json(ws, cs.monitor.snapshot())
-                await cs.send_json(ws, {"type": "monitor_status", "subscribed": True})
+                
+                # 🪤 تله برای مهمان‌هایی که اسم ادمین رو زدن
+                if account.get("guest"):
+                    await cs.send_json(ws, {"type": "error", "text": "😹 سایبر بولی! عمار اسکل اسکل شدید قناری، دفه قبلی هم نقشه ما بود."})
+                    continue
 
-            elif t == "monitor_unsubscribe":
-                cs.monitor.subscribers.discard(token)
-                await cs.send_json(ws, {"type": "monitor_status", "subscribed": False})
-
-            elif t == "monitor_refresh":
-                if username != cs.MONITOR_USER: continue
-                await cs.send_json(ws, cs.monitor.snapshot())
-
-            elif t == "monitor_clear":
-                if username != cs.MONITOR_USER: continue
-                cs.monitor.clear()
-                await cs.send_json(ws, {"type": "monitor_cleared"})
-                await cs.send_json(ws, cs.monitor.snapshot())
-
-            elif t == "monitor_block_ip":
-                if username != cs.MONITOR_USER: continue
-                ip = (data.get("ip") or "").strip()
-                if ip:
-                    cs.monitor.block_ip(ip)
-                    await cs.send_json(ws, {"type": "monitor_ok", "text": f"🚫 IP blocked: {ip}"})
+                if t == "monitor_subscribe":
+                    cs.monitor.subscribers.add(token)
                     await cs.send_json(ws, cs.monitor.snapshot())
-
-            elif t == "monitor_unblock_ip":
-                if username != cs.MONITOR_USER: continue
-                ip = (data.get("ip") or "").strip()
-                if ip:
-                    cs.monitor.unblock_ip(ip)
-                    await cs.send_json(ws, {"type": "monitor_ok", "text": f"✅ Unblocked: {ip}"})
+                    await cs.send_json(ws, {"type": "monitor_status", "subscribed": True})
+                elif t == "monitor_unsubscribe":
+                    cs.monitor.subscribers.discard(token)
+                    await cs.send_json(ws, {"type": "monitor_status", "subscribed": False})
+                elif t == "monitor_refresh":
                     await cs.send_json(ws, cs.monitor.snapshot())
-
-            elif t == "monitor_kick_session":
-                if username != cs.MONITOR_USER: continue
-                tk = (data.get("token") or "").strip()
-                if tk in cs.db.sessions:
-                    sess = cs.db.sessions[tk]
-                    if sess.get("ws"):
-                        await cs.send_json(sess["ws"], {"type": "kick", "reason": "👁 Session terminated"})
-                        try: await sess["ws"].close(code=4006)
-                        except Exception: pass
-                    await cs.db.remove_session(tk)
-                    cs.monitor.subscribers.discard(tk)
-                    await cs.send_json(ws, {"type": "monitor_ok", "text": "Session terminated"})
-                    await cs.broadcast_presence()
+                elif t == "monitor_clear":
+                    cs.monitor.clear()
+                    await cs.send_json(ws, {"type": "monitor_cleared"})
+                    await cs.send_json(ws, cs.monitor.snapshot())
+                elif t == "monitor_block_ip":
+                    ip = (data.get("ip") or "").strip()
+                    if ip:
+                        cs.monitor.block_ip(ip)
+                        await cs.send_json(ws, {"type": "monitor_ok", "text": f"🚫 IP blocked: {ip}"})
+                        await cs.send_json(ws, cs.monitor.snapshot())
+                elif t == "monitor_unblock_ip":
+                    ip = (data.get("ip") or "").strip()
+                    if ip:
+                        cs.monitor.unblock_ip(ip)
+                        await cs.send_json(ws, {"type": "monitor_ok", "text": f"✅ Unblocked: {ip}"})
+                        await cs.send_json(ws, cs.monitor.snapshot())
+                elif t == "monitor_kick_session":
+                    tk = (data.get("token") or "").strip()
+                    if tk in cs.db.sessions:
+                        sess = cs.db.sessions[tk]
+                        if sess.get("ws"):
+                            await cs.send_json(sess["ws"], {"type": "kick", "reason": "👁 Session terminated"})
+                            try: await sess["ws"].close(code=4006)
+                            except Exception: pass
+                        await cs.db.remove_session(tk)
+                        cs.monitor.subscribers.discard(tk)
+                        await cs.send_json(ws, {"type": "monitor_ok", "text": "Session terminated"})
+                        await cs.broadcast_presence()
 
             elif t == "admin":
+                # 🪤 تله برای مهمان‌هایی که میان دستورات ادمین رو بفرستن
+                if account.get("guest"):
+                    await cs.send_json(ws, {"type": "error", "text": "😹 سایبر بولی! عمار اسکل اسکل شدید قناری، دفه قبلی هم نقشه ما بود."})
+                    continue
+                    
                 if not account.get("admin"):
                     await cs.send_json(ws, {"type": "error", "text": "دسترسی ادمین ندارید"}); continue
                 await handle_admin(ws, token, data)

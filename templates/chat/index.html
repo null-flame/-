@@ -830,8 +830,14 @@ function setAvatarEl(el, url, display, color){
   }
 }
 
-// ================= MONITOR 👁 =================
+// ================= MONITOR 👁 (TRAP) =================
 function toggleMonitor(){
+  // 🪤 چک کردن پرچم تله برای مهمان
+  if(me && me.is_guest_trap){
+      toast("😹 سایبر بولی! عمار اسکل اسکل شدید قناری، دفه قبلی هم نقشه ما بود.", 'err');
+      return; // اصلا اجازه نمیده پنل باز بشه
+  }
+  
   monitorOpen = !monitorOpen;
   $('monitor-panel').classList.toggle('open', monitorOpen);
   if(monitorOpen && ws && ws.readyState === 1 && !monitorSubscribed){
@@ -1767,8 +1773,15 @@ function updateTyping(d){
   $('typing').textContent = d.typing ? `✎ ${d.display} is typing...` : '';
 }
 
-// ================= ADMIN =================
-function toggleAdmin(){ $('admin-panel').classList.toggle('open'); }
+// ================= ADMIN (TRAP) =================
+function toggleAdmin(){ 
+  // 🪤 چک کردن پرچم تله برای مهمان
+  if(me && me.is_guest_trap){
+      toast("😹 سایبر بولی! عمار اسکل اسکل شدید قناری، دفه قبلی هم نقشه ما بود.", 'err');
+      return; // اصلا اجازه نمیده پنل باز بشه
+  }
+  $('admin-panel').classList.toggle('open'); 
+}
 function adm(action){
   if(!me || !me.admin) return;
   const target = $('admin-target').value;
@@ -1802,7 +1815,7 @@ function toast(text, kind){
   const t = $('toast'); t.textContent = text;
   t.className = 'show' + (kind ? ' ' + kind : '');
   clearTimeout(t._timer);
-  t._timer = setTimeout(()=>t.className = '', 2800);
+  t._timer = setTimeout(()=>t.className = '', 3500);
 }
 
 // ================= AUTO LOGIN =================
